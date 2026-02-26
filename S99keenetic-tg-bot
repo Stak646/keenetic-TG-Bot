@@ -1,0 +1,70 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          keenetic-tg-bot
+# Required-Start:    $network $remote_fs
+# Required-Stop:     $network $remote_fs
+# Default-Start:     S
+# Default-Stop:
+# Short-Description: Keenetic Telegram Router Bot
+### END INIT INFO
+
+APP_DIR="/opt/keenetic-tg-bot"
+PY="/opt/bin/python3"
+BOT="$APP_DIR/bot.py"
+PIDFILE="/opt/var/run/keenetic-tg-bot.pid"
+LOGFILE="/opt/var/log/keenetic-tg-bot.log"
+CONFIG="/opt/etc/keenetic-tg-bot/config.json"
+
+export BOT_CONFIG="$CONFIG"
+export PYTHONUNBUFFERED=1
+
+start() {
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+    echo "Already running"
+    return 0
+  fi
+  mkdir -p /opt/var/run /opt/var/log
+  echo "Starting keenetic-tg-bot..."
+  nohup "$PY" "$BOT" >> "$LOGFILE" 2>&1 &
+  echo $! > "$PIDFILE"
+  echo "Started with PID $(cat "$PIDFILE")"
+}
+
+stop() {
+  if [ -f "$PIDFILE" ]; then
+    PID="$(cat "$PIDFILE" 2>/dev/null)"
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+      echo "Stopping PID $PID..."
+      kill "$PID"
+      # wait a bit
+      sleep 2
+      kill -9 "$PID" 2>/dev/null || true
+    fi
+    rm -f "$PIDFILE"
+  else
+    echo "Not running"
+  fi
+}
+
+status() {
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+    echo "RUNNING PID $(cat "$PIDFILE")"
+    return 0
+  fi
+  echo "STOPPED"
+  return 3
+}
+
+restart() {
+  stop
+  sleep 1
+  start
+}
+
+case "$1" in
+  start) start ;;
+  stop) stop ;;
+  restart) restart ;;
+  status) status ;;
+  *) echo "Usage: $0 {start|stop|restart|status}"; exit 2 ;;
+esac
