@@ -1,10 +1,20 @@
 #!/bin/sh
 # Keenetic TG Bot autoinstall (Entware /opt)
-# - Works as: curl .../autoinstall.sh | sh
-# - Interactive questions work even with pipe (reads from /dev/tty)
+# - i18n: RU/EN selection at start (--lang ru|en)
+# - quiet by default (prints only results); full logs with --debug
+# - works with curl | sh (reads input from /dev/tty)
 #
 set -e
+
 export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+# -------- settings --------
+REPO="Stak646/keenetic-TG-Bot"
+BRANCH="main"
+
+LANG_SEL=""
+DEBUG=0
+ASSUME_YES=0
 
 WITH_BOT=0
 WITH_HYDRA=0
@@ -13,48 +23,67 @@ WITH_NFQWSWEB=0
 WITH_AWG=0
 WITH_CRON=0
 WITH_WEEKLY=0
-ASSUME_YES=0
 
 TG_TOKEN=""
 TG_ADMIN_ID=""
 RECONFIG=0
 
-REPO="Stak646/keenetic-TG-Bot"
-BRANCH="main"
+LOGDIR="/opt/var/log"
+LOGFILE="$LOGDIR/keenetic-tg-bot-install.log"
 
-has_cmd() { command -v "$1" >/dev/null 2>&1; }
-is_exec() { [ -x "$1" ]; }
+TTY="/dev/tty"
 
-need_opt() {
-  if [ ! -d /opt ] || [ ! -x /opt/bin/opkg ]; then
-    echo "ERROR: Entware (/opt + opkg) is not ready."
-    exit 1
+# -------- helpers --------
+t() {
+  # t KEY [ru] [en]
+  key="$1"; ru="$2"; en="$3"
+  case "$LANG_SEL" in
+    ru) printf "%s" "$ru" ;;
+    en) printf "%s" "$en" ;;
+    *)  printf "%s" "$en" ;;
+  esac
+}
+
+say() {
+  # print message
+  printf "%s\n" "$*"
+}
+
+dbg() {
+  [ "$DEBUG" -eq 1 ] && printf "[debug] %s\n" "$*" >&2 || true
+}
+
+runq() {
+  # runq "description" command...
+  desc="$1"; shift
+  mkdir -p "$LOGDIR"
+  if [ "$DEBUG" -eq 1 ]; then
+    say "$desc"
+    "$@" 2>&1 | tee -a "$LOGFILE"
+    return "${PIPESTATUS:-0}"
+  else
+    "$@" >> "$LOGFILE" 2>&1
   fi
 }
 
-raw_url() { echo "https://raw.githubusercontent.com/$REPO/$BRANCH/$1"; }
+ok()   { say "✅ $*"; }
+warn() { say "⚠️ $*"; }
+fail() { say "❌ $*"; }
 
-fetch_file() {
-  URL="$(raw_url "$1")"
-  DEST="$2"
-  mkdir -p "$(dirname "$DEST")"
-  echo "download: $URL -> $DEST" >&2
-  curl -fsSL "$URL" -o "$DEST"
-}
-
-ensure_repo_files() {
-  TMP="/opt/tmp/keenetic-tg-bot-installer"
-  mkdir -p "$TMP"
-  fetch_file "bot.py" "$TMP/bot.py"
-  fetch_file "config.example.json" "$TMP/config.example.json"
-  fetch_file "S99keenetic-tg-bot" "$TMP/S99keenetic-tg-bot"
-  fetch_file "install.sh" "$TMP/install.sh"
-  echo "$TMP"
+read_tty() {
+  # read_tty VAR PROMPT
+  var="$1"; prompt="$2"
+  if [ -r "$TTY" ]; then
+    printf "%s" "$prompt" > "$TTY"
+    read "$var" < "$TTY" || true
+  else
+    printf "%s" "$prompt"
+    read "$var" || true
+  fi
 }
 
 ask() {
   [ "$ASSUME_YES" -eq 1 ] && return 0
-  TTY="/dev/tty"
   if [ -r "$TTY" ]; then
     printf "%s [y/N]: " "$1" > "$TTY"
     read ans < "$TTY" || true
@@ -65,22 +94,111 @@ ask() {
   case "$ans" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 
+need_entware() {
+  if [ ! -x /opt/bin/opkg ]; then
+    fail "$(t X "Entware не найден (/opt/bin/opkg). Установи Entware и повтори." "Entware not found (/opt/bin/opkg). Install Entware first.")"
+    exit 1
+  fi
+}
+
+raw_url() { echo "https://raw.githubusercontent.com/$REPO/$BRANCH/$1"; }
+
+fetch_file() {
+  f="$1"; dest="$2"
+  url="$(raw_url "$f")"
+  mkdir -p "$(dirname "$dest")"
+  if [ "$DEBUG" -eq 1 ]; then
+    say "download: $url -> $dest"
+  else
+    dbg "download: $url -> $dest"
+  fi
+  curl -fsSL "$url" -o "$dest" >> "$LOGFILE" 2>&1
+}
+
+# prefer /etc, fallback /opt/etc; create /etc symlink if possible
+pick_cfg_dir() {
+  CFG_DIR="/etc/keenetic-tg-bot"
+  if [ ! -d /etc ] || [ ! -w /etc ]; then
+    CFG_DIR="/opt/etc/keenetic-tg-bot"
+  fi
+  echo "$CFG_DIR"
+}
+
+ensure_repo_files() {
+  TMP="/opt/tmp/keenetic-tg-bot-installer"
+  rm -rf "$TMP" >/dev/null 2>&1 || true
+  mkdir -p "$TMP"
+  fetch_file "bot.py" "$TMP/bot.py"
+  fetch_file "config.example.json" "$TMP/config.example.json"
+  fetch_file "S99keenetic-tg-bot" "$TMP/S99keenetic-tg-bot"
+  fetch_file "install.sh" "$TMP/install.sh"
+  echo "$TMP"
+}
+
+cleanup() {
+  # remove temporary files
+  rm -rf /opt/tmp/keenetic-tg-bot-installer >/dev/null 2>&1 || true
+  rm -rf /opt/tmp/keenetic-tg-bot-weekly >/dev/null 2>&1 || true
+}
+
+select_language() {
+  [ -n "$LANG_SEL" ] && return 0
+  # auto: if tty exists
+  if [ -r "$TTY" ]; then
+    printf "\n1) Русский\n2) English\n" > "$TTY"
+    printf "Select language / Выберите язык [1/2]: " > "$TTY"
+    read choice < "$TTY" || true
+    case "$choice" in
+      1) LANG_SEL="ru" ;;
+      2) LANG_SEL="en" ;;
+      *) LANG_SEL="en" ;;
+    esac
+  else
+    LANG_SEL="en"
+  fi
+}
+
+# -------- detection --------
+has_cmd() { command -v "$1" >/dev/null 2>&1; }
+is_exec() { [ -x "$1" ]; }
+
+installed_bot() {
+  CFG_DIR="$(pick_cfg_dir)"
+  [ -f "$CFG_DIR/bot.py" ] && [ -x /opt/etc/init.d/S99keenetic-tg-bot ]
+}
+installed_hydra() { has_cmd neo || has_cmd hr || is_exec /opt/bin/neo || is_exec /opt/bin/hr; }
+installed_nfqws2() { is_exec /opt/etc/init.d/S51nfqws2 || has_cmd nfqws2 || is_exec /opt/bin/nfqws2; }
+installed_nfqwsweb() { [ -f /opt/etc/nfqws_web.conf ] || [ -d /opt/share/nfqws-web ] || /opt/bin/opkg list-installed 2>/dev/null | grep -q '^nfqws-keenetic-web '; }
+installed_awg() { is_exec /opt/etc/init.d/S99awg-manager || has_cmd awg-manager || is_exec /opt/bin/awg-manager; }
+installed_cron() { is_exec /opt/etc/init.d/S10cron || /opt/bin/opkg list-installed 2>/dev/null | grep -q '^cron '; }
+
+say_detected() {
+  say "==== DETECTED ===="
+  say "BOT:        $(installed_bot && echo installed || echo missing)"
+  say "HydraRoute:  $(installed_hydra && echo installed || echo missing)"
+  say "NFQWS2:      $(installed_nfqws2 && echo installed || echo missing)"
+  say "NFQWS web:   $(installed_nfqwsweb && echo installed || echo missing)"
+  say "AWG Manager: $(installed_awg && echo installed || echo missing)"
+  say "cron:        $(installed_cron && echo installed || echo missing)"
+  say "==============="
+}
+
+# -------- installers --------
+install_base() {
+  runq "$(t X "Обновляю списки opkg..." "Updating opkg lists...")" /opt/bin/opkg update || true
+  runq "$(t X "Устанавливаю базовые утилиты..." "Installing base utilities...")" /opt/bin/opkg install ca-certificates curl coreutils-nohup || true
+}
+
 prompt_token_admin() {
-  TTY="/dev/tty"
-  if [ -z "$TG_TOKEN" ]; then
-    echo "Telegram Bot Token (@BotFather /newbot)" >&2
-    if [ -r "$TTY" ]; then printf "Введите bot_token: " > "$TTY"; read TG_TOKEN < "$TTY" || true; else printf "Введите bot_token: "; read TG_TOKEN || true; fi
-  fi
-  if [ -z "$TG_ADMIN_ID" ]; then
-    echo "Telegram user_id (число, @userinfobot)" >&2
-    if [ -r "$TTY" ]; then printf "Введите admin user_id: " > "$TTY"; read TG_ADMIN_ID < "$TTY" || true; else printf "Введите admin user_id: "; read TG_ADMIN_ID || true; fi
-  fi
-  case "$TG_ADMIN_ID" in ''|*[!0-9]*) echo "ERROR: admin user_id должен быть числом." >&2; exit 2 ;; esac
-  [ -z "$TG_TOKEN" ] && { echo "ERROR: bot_token пустой." >&2; exit 2; }
+  [ -n "$TG_TOKEN" ] && [ -n "$TG_ADMIN_ID" ] && return 0
+  read_tty TG_TOKEN "$(t X "Введите bot_token: " "Enter bot_token: ")"
+  read_tty TG_ADMIN_ID "$(t X "Введите admin user_id (число): " "Enter admin user_id (number): ")"
+  case "$TG_ADMIN_ID" in ''|*[!0-9]*) fail "$(t X "admin user_id должен быть числом" "admin user_id must be a number")"; exit 2 ;; esac
+  [ -z "$TG_TOKEN" ] && { fail "$(t X "bot_token пустой" "bot_token is empty")"; exit 2; }
 }
 
 write_config_json() {
-  CFG_DIR="/opt/etc/keenetic-tg-bot"
+  CFG_DIR="$(pick_cfg_dir)"
   mkdir -p "$CFG_DIR"
   CFG="$CFG_DIR/config.json"
   cat > "$CFG" <<EOF
@@ -90,83 +208,156 @@ write_config_json() {
   "allow_chats": [],
   "command_timeout_sec": 30,
   "poll_interval_sec": 2,
-  "monitor": {"enabled": true, "interval_sec": 60, "opkg_update_interval_sec": 86400, "internet_check_interval_sec": 300, "cpu_load_threshold": 3.5, "disk_free_mb_threshold": 200},
-  "notify": {"updates": true, "service_down": true, "internet_down": true, "log_errors": true, "cooldown_sec": 300}
+  "monitor": {
+    "enabled": true,
+    "interval_sec": 60,
+    "opkg_update_interval_sec": 86400,
+    "internet_check_interval_sec": 300,
+    "cpu_load_threshold": 3.5,
+    "disk_free_mb_threshold": 200
+  },
+  "notify": {
+    "updates": true,
+    "service_down": true,
+    "internet_down": true,
+    "log_errors": true,
+    "cooldown_sec": 300
+  }
 }
 EOF
-  echo "Saved config: $CFG" >&2
 }
 
-installed_bot() { [ -x /opt/etc/init.d/S99keenetic-tg-bot ] && [ -f /opt/keenetic-tg-bot/bot.py ]; }
-installed_hydra() { has_cmd neo || has_cmd hr || is_exec /opt/bin/neo || is_exec /opt/bin/hr; }
-installed_nfqws2() { is_exec /opt/etc/init.d/S51nfqws2 || has_cmd nfqws2 || is_exec /opt/bin/nfqws2; }
-installed_nfqwsweb() { [ -f /opt/etc/nfqws_web.conf ] || [ -d /opt/share/nfqws-web ] || /opt/bin/opkg list-installed 2>/dev/null | grep -q '^nfqws-keenetic-web '; }
-installed_awg() { is_exec /opt/etc/init.d/S99awg-manager || has_cmd awg-manager || is_exec /opt/bin/awg-manager; }
-installed_cron() { is_exec /opt/etc/init.d/S10cron || /opt/bin/opkg list-installed 2>/dev/null | grep -q '^cron '; }
+deploy_bot_files() {
+  SRC_DIR="$1"
+  CFG_DIR="$(pick_cfg_dir)"
+  mkdir -p "$CFG_DIR" /opt/etc/init.d
 
-say_status() {
-  echo "==== DETECTED ===="
-  printf "BOT:        %s\n" "$(installed_bot && echo installed || echo missing)"
-  printf "HydraRoute:  %s\n" "$(installed_hydra && echo installed || echo missing)"
-  printf "NFQWS2:      %s\n" "$(installed_nfqws2 && echo installed || echo missing)"
-  printf "NFQWS web:   %s\n" "$(installed_nfqwsweb && echo installed || echo missing)"
-  printf "AWG Manager: %s\n" "$(installed_awg && echo installed || echo missing)"
-  printf "cron:        %s\n" "$(installed_cron && echo installed || echo missing)"
-  echo "==============="
-}
+  cp -f "$SRC_DIR/bot.py" "$CFG_DIR/bot.py"
+  chmod +x "$CFG_DIR/bot.py"
 
-install_base() { /opt/bin/opkg update; /opt/bin/opkg install ca-certificates curl coreutils-nohup; }
-
-install_bot() {
-  echo "[BOT] install python + deps..."
-  /opt/bin/opkg update
-  /opt/bin/opkg install python3 python3-pip ca-certificates curl coreutils-nohup
-  python3 -m pip install --upgrade pip
-  python3 -m pip install --no-cache-dir pyTelegramBotAPI
-
-  SRC_DIR="$(ensure_repo_files)"
-  mkdir -p /opt/keenetic-tg-bot /opt/etc/init.d /opt/etc/keenetic-tg-bot
-  cp -f "$SRC_DIR/bot.py" /opt/keenetic-tg-bot/bot.py
-  chmod +x /opt/keenetic-tg-bot/bot.py
   cp -f "$SRC_DIR/S99keenetic-tg-bot" /opt/etc/init.d/S99keenetic-tg-bot
   chmod +x /opt/etc/init.d/S99keenetic-tg-bot
 
-  if [ "$RECONFIG" -eq 1 ] || [ ! -f /opt/etc/keenetic-tg-bot/config.json ]; then
-    prompt_token_admin
-    write_config_json
+  # create /etc symlink if installed into /opt/etc and /etc is writable
+  if [ "$CFG_DIR" = "/opt/etc/keenetic-tg-bot" ] && [ ! -e /etc/keenetic-tg-bot ] && [ -w /etc ]; then
+    ln -s /opt/etc/keenetic-tg-bot /etc/keenetic-tg-bot >/dev/null 2>&1 || true
   fi
-
-  /opt/etc/init.d/S99keenetic-tg-bot restart || true
 }
 
-install_hydra() { echo "[HydraRoute Neo] install..."; /opt/bin/opkg update; /opt/bin/opkg install curl; curl -Ls https://ground-zerro.github.io/release/keenetic/install-neo.sh | sh; }
-install_nfqws2() { echo "[NFQWS2] install..."; /opt/bin/opkg update; /opt/bin/opkg install ca-certificates wget-ssl; /opt/bin/opkg remove wget-nossl || true; mkdir -p /opt/etc/opkg; echo 'src/gz nfqws2-keenetic https://nfqws.github.io/nfqws2-keenetic/aarch64' > /opt/etc/opkg/nfqws2-keenetic.conf; /opt/bin/opkg update; /opt/bin/opkg install nfqws2-keenetic; }
-install_nfqwsweb() { echo "[NFQWS web] install..."; /opt/bin/opkg update; /opt/bin/opkg install ca-certificates wget-ssl; /opt/bin/opkg remove wget-nossl || true; mkdir -p /opt/etc/opkg; echo 'src/gz nfqws-keenetic-web https://nfqws.github.io/nfqws-keenetic-web/all' > /opt/etc/opkg/nfqws-keenetic-web.conf; /opt/bin/opkg update; /opt/bin/opkg install nfqws-keenetic-web; for s in /opt/etc/init.d/S*php* /opt/etc/init.d/S*lighttpd /opt/etc/init.d/S*nginx; do [ -x "$s" ] && "$s" start >/dev/null 2>&1 || true; done; }
-install_awg() { echo "[AWG Manager] install..."; /opt/bin/opkg update; /opt/bin/opkg install ca-certificates curl; curl -sL https://raw.githubusercontent.com/hoaxisr/awg-manager/main/scripts/install.sh | sh; }
-install_cron() { echo "[cron] install..."; /opt/bin/opkg update; /opt/bin/opkg install cron; /opt/etc/init.d/S10cron start || true; }
+install_bot() {
+  ok "$(t X "Установка бота..." "Installing bot...")"
+  runq "opkg python" /opt/bin/opkg install python3 python3-pip ca-certificates curl coreutils-nohup || { fail "python/opkg"; return 1; }
+
+  # pip
+  runq "pip upgrade" python3 -m pip install --upgrade pip || true
+  runq "pip pyTelegramBotAPI" python3 -m pip install --no-cache-dir pyTelegramBotAPI || { fail "pip pyTelegramBotAPI"; return 1; }
+
+  SRC_DIR="$(ensure_repo_files)"
+  deploy_bot_files "$SRC_DIR"
+
+  CFG_DIR="$(pick_cfg_dir)"
+  if [ "$RECONFIG" -eq 1 ] || [ ! -f "$CFG_DIR/config.json" ]; then
+    prompt_token_admin
+    write_config_json
+    ok "$(t X "Конфиг сохранён" "Config saved")"
+  fi
+
+  runq "bot restart" /opt/etc/init.d/S99keenetic-tg-bot restart || true
+  if /opt/etc/init.d/S99keenetic-tg-bot status >/dev/null 2>&1; then
+    ok "$(t X "Бот запущен" "Bot started")"
+  else
+    warn "$(t X "Бот не запустился. См. лог: /opt/var/log/keenetic-tg-bot.log" "Bot did not start. See log: /opt/var/log/keenetic-tg-bot.log")"
+  fi
+  cleanup
+}
+
+install_hydra() {
+  ok "$(t X "Установка HydraRoute Neo..." "Installing HydraRoute Neo...")"
+  if runq "hydra" sh -c 'opkg update && opkg install curl && curl -Ls "https://ground-zerro.github.io/release/keenetic/install-neo.sh" | sh'; then
+    ok "$(t X "HydraRoute Neo установлен" "HydraRoute Neo installed")"
+  else
+    fail "$(t X "HydraRoute Neo установка не удалась" "HydraRoute Neo install failed")"
+    return 1
+  fi
+}
+
+install_nfqws2() {
+  ok "$(t X "Установка NFQWS2..." "Installing NFQWS2...")"
+  if runq "nfqws2" sh -c 'opkg update && opkg install ca-certificates wget-ssl && opkg remove wget-nossl || true; mkdir -p /opt/etc/opkg; echo "src/gz nfqws2-keenetic https://nfqws.github.io/nfqws2-keenetic/aarch64" > /opt/etc/opkg/nfqws2-keenetic.conf; opkg update; opkg install nfqws2-keenetic'; then
+    ok "$(t X "NFQWS2 установлен" "NFQWS2 installed")"
+  else
+    fail "$(t X "NFQWS2 установка не удалась" "NFQWS2 install failed")"
+    return 1
+  fi
+}
+
+start_web_stack_if_present() {
+  for s in /opt/etc/init.d/S*php* /opt/etc/init.d/S*lighttpd /opt/etc/init.d/S*nginx; do
+    [ -x "$s" ] || continue
+    runq "web stack" "$s" start || true
+  done
+}
+
+install_nfqwsweb() {
+  # NFQWS web requires NFQWS2
+  installed_nfqws2 || WITH_NFQWS2=1
+
+  ok "$(t X "Установка NFQWS web..." "Installing NFQWS web...")"
+  if runq "nfqwsweb" sh -c 'opkg update && opkg install ca-certificates wget-ssl && opkg remove wget-nossl || true; mkdir -p /opt/etc/opkg; echo "src/gz nfqws-keenetic-web https://nfqws.github.io/nfqws-keenetic-web/all" > /opt/etc/opkg/nfqws-keenetic-web.conf; opkg update; opkg install nfqws-keenetic-web'; then
+    start_web_stack_if_present
+    ok "$(t X "NFQWS web установлен (порт 90)" "NFQWS web installed (port 90)")"
+  else
+    fail "$(t X "NFQWS web установка не удалась" "NFQWS web install failed")"
+    return 1
+  fi
+}
+
+install_awg() {
+  ok "$(t X "Установка AWG Manager..." "Installing AWG Manager...")"
+  if runq "awg" sh -c 'opkg update && opkg install ca-certificates curl && curl -sL "https://raw.githubusercontent.com/hoaxisr/awg-manager/main/scripts/install.sh" | sh'; then
+    ok "$(t X "AWG Manager установлен" "AWG Manager installed")"
+  else
+    fail "$(t X "AWG Manager установка не удалась" "AWG Manager install failed")"
+    return 1
+  fi
+}
+
+install_cron() {
+  ok "$(t X "Установка cron..." "Installing cron...")"
+  if runq "cron" sh -c 'opkg update && opkg install cron && /opt/etc/init.d/S10cron start || true'; then
+    ok "$(t X "cron установлен" "cron installed")"
+  else
+    fail "$(t X "cron установка не удалась" "cron install failed")"
+    return 1
+  fi
+}
 
 setup_weekly_updates() {
-  echo "[weekly updates] setup every Thu 06:00"
-  UPD="/opt/bin/weekly-update.sh"
-  mkdir -p /opt/bin /opt/var/log
-  cat > "$UPD" <<'SH'
+  ok "$(t X "Настраиваю еженедельные обновления (Чт 06:00)..." "Setting weekly updates (Thu 06:00)...")"
+  runq "weekly setup" sh -c 'mkdir -p /opt/bin /opt/var/log; cat > /opt/bin/weekly-update.sh <<'\''SH'\'' 
 #!/bin/sh
 LOG="/opt/var/log/weekly-update.log"
 mkdir -p /opt/var/log
+
 REPO="Stak646/keenetic-TG-Bot"
 BRANCH="main"
 raw() { echo "https://raw.githubusercontent.com/${REPO}/${BRANCH}/$1"; }
+
 update_bot_files() {
   TMP="/opt/tmp/keenetic-tg-bot-weekly"
   mkdir -p "$TMP"
   curl -fsSL "$(raw bot.py)" -o "$TMP/bot.py" || return 0
   curl -fsSL "$(raw S99keenetic-tg-bot)" -o "$TMP/S99keenetic-tg-bot" || return 0
-  mkdir -p /opt/keenetic-tg-bot /opt/etc/init.d
-  cp -f "$TMP/bot.py" /opt/keenetic-tg-bot/bot.py
-  chmod +x /opt/keenetic-tg-bot/bot.py
+
+  CFG="/etc/keenetic-tg-bot"
+  [ -d /etc ] && [ -w /etc ] || CFG="/opt/etc/keenetic-tg-bot"
+  mkdir -p "$CFG" /opt/etc/init.d
+  cp -f "$TMP/bot.py" "$CFG/bot.py"
+  chmod +x "$CFG/bot.py"
   cp -f "$TMP/S99keenetic-tg-bot" /opt/etc/init.d/S99keenetic-tg-bot
   chmod +x /opt/etc/init.d/S99keenetic-tg-bot
 }
+
 {
   echo "===== $(date) weekly update ====="
   opkg update
@@ -176,22 +367,29 @@ update_bot_files() {
   [ -x /opt/etc/init.d/S51nfqws2 ] && /opt/etc/init.d/S51nfqws2 restart || true
   [ -x /opt/etc/init.d/S99awg-manager ] && /opt/etc/init.d/S99awg-manager restart || true
   [ -x /opt/etc/init.d/S99keenetic-tg-bot ] && /opt/etc/init.d/S99keenetic-tg-bot restart || true
-  echo "OK"
-  echo
 } >> "$LOG" 2>&1
 SH
-  chmod +x "$UPD"
-  CRONFILE="/opt/etc/crontab"
-  LINE="0 6 * * 4 root $UPD"
-  touch "$CRONFILE"
-  grep -Fq "$UPD" "$CRONFILE" || echo "$LINE" >> "$CRONFILE"
-  /opt/etc/init.d/S10cron restart || true
-  echo "[weekly updates] done. log: /opt/var/log/weekly-update.log"
+chmod +x /opt/bin/weekly-update.sh
+touch /opt/etc/crontab
+grep -Fq "/opt/bin/weekly-update.sh" /opt/etc/crontab || echo "0 6 * * 4 root /opt/bin/weekly-update.sh" >> /opt/etc/crontab
+/opt/etc/init.d/S10cron restart || true'
+  ok "$(t X "Еженедельные обновления настроены" "Weekly updates configured")"
 }
 
-# args
+usage() {
+  say "autoinstall.sh options:"
+  say "  --lang ru|en"
+  say "  --debug"
+  say "  --yes"
+  say "  --bot --token <token> --admin <id> [--reconfig]"
+  say "  --hydra --nfqws2 --nfqwsweb --awg --cron --weekly"
+}
+
+# -------- args --------
 while [ $# -gt 0 ]; do
   case "$1" in
+    --lang) shift; LANG_SEL="$1" ;;
+    --debug|-debug) DEBUG=1 ;;
     --yes) ASSUME_YES=1 ;;
     --token) shift; TG_TOKEN="$1" ;;
     --admin) shift; TG_ADMIN_ID="$1" ;;
@@ -203,45 +401,55 @@ while [ $# -gt 0 ]; do
     --awg) WITH_AWG=1 ;;
     --cron) WITH_CRON=1 ;;
     --weekly) WITH_WEEKLY=1 ;;
+    -h|--help) usage; exit 0 ;;
   esac
   shift
 done
 
-need_opt
+need_entware
+select_language
+
+mkdir -p "$LOGDIR"
+: > "$LOGFILE" || true
+
 install_base
-say_status
+say_detected
 
 FLAGS="${WITH_BOT}${WITH_HYDRA}${WITH_NFQWS2}${WITH_NFQWSWEB}${WITH_AWG}${WITH_CRON}${WITH_WEEKLY}"
 
 if [ "$FLAGS" = "0000000" ]; then
-  echo "Interactive mode."
-  installed_hydra || { ask "Install HydraRoute Neo?" && WITH_HYDRA=1; }
-  installed_nfqws2 || { ask "Install NFQWS2?" && WITH_NFQWS2=1; }
-  (installed_nfqws2 && installed_nfqwsweb) || { installed_nfqws2 && ask "Install NFQWS web UI?" && WITH_NFQWSWEB=1; } || true
-  installed_awg || { ask "Install AWG Manager?" && WITH_AWG=1; }
-  installed_cron || { ask "Install cron (for scheduling updates)?" && WITH_CRON=1; }
-  [ "$WITH_CRON" -eq 1 ] && { ask "Setup weekly updates (Thu 06:00)?" && WITH_WEEKLY=1; } || true
-  installed_bot || { ask "Install Telegram bot service?" && WITH_BOT=1; }
+  say "$(t X "Интерактивный режим." "Interactive mode.")"
+  installed_hydra || { ask "$(t X "Установить HydraRoute Neo?" "Install HydraRoute Neo?")" && WITH_HYDRA=1; }
+  installed_nfqws2 || { ask "$(t X "Установить NFQWS2?" "Install NFQWS2?")" && WITH_NFQWS2=1; }
+  installed_nfqwsweb || { ask "$(t X "Установить NFQWS web UI?" "Install NFQWS web UI?")" && WITH_NFQWSWEB=1; }
+  installed_awg || { ask "$(t X "Установить AWG Manager?" "Install AWG Manager?")" && WITH_AWG=1; }
+  installed_cron || { ask "$(t X "Установить cron (для расписаний)?" "Install cron (for scheduling)?" )" && WITH_CRON=1; }
+  [ "$WITH_CRON" -eq 1 ] && { ask "$(t X "Настроить автообновление (Чт 06:00)?" "Setup weekly update (Thu 06:00)?" )" && WITH_WEEKLY=1; } || true
+  installed_bot || { ask "$(t X "Установить Telegram-бот?" "Install Telegram bot service?" )" && WITH_BOT=1; }
 else
-  if [ "$ASSUME_YES" -eq 1 ] && [ "$FLAGS" = "0000000" ]; then
-    installed_hydra || WITH_HYDRA=1
-    installed_nfqws2 || WITH_NFQWS2=1
-    installed_nfqwsweb || WITH_NFQWSWEB=1
-    installed_awg || WITH_AWG=1
-    installed_cron || WITH_CRON=1
-    WITH_WEEKLY=1
-    installed_bot || WITH_BOT=1
-  fi
+  # if user explicitly picked nfqwsweb, force nfqws2
+  [ "$WITH_NFQWSWEB" -eq 1 ] && WITH_NFQWS2=1
 fi
 
-[ "$WITH_HYDRA" -eq 1 ] && install_hydra
-[ "$WITH_NFQWS2" -eq 1 ] && install_nfqws2
-[ "$WITH_NFQWSWEB" -eq 1 ] && install_nfqwsweb
-[ "$WITH_AWG" -eq 1 ] && install_awg
-[ "$WITH_CRON" -eq 1 ] && install_cron
-[ "$WITH_WEEKLY" -eq 1 ] && setup_weekly_updates
-[ "$WITH_BOT" -eq 1 ] && install_bot
+[ "$ASSUME_YES" -eq 1 ] && [ "$FLAGS" = "0000000" ] && {
+  installed_hydra || WITH_HYDRA=1
+  installed_nfqws2 || WITH_NFQWS2=1
+  installed_nfqwsweb || WITH_NFQWSWEB=1
+  installed_awg || WITH_AWG=1
+  installed_cron || WITH_CRON=1
+  WITH_WEEKLY=1
+  installed_bot || WITH_BOT=1
+}
 
-echo "DONE."
-echo "Config: /opt/etc/keenetic-tg-bot/config.json"
-echo "Logs:   /opt/var/log/keenetic-tg-bot.log"
+# -------- execute --------
+[ "$WITH_HYDRA" -eq 1 ] && install_hydra || true
+[ "$WITH_NFQWS2" -eq 1 ] && install_nfqws2 || true
+[ "$WITH_NFQWSWEB" -eq 1 ] && install_nfqwsweb || true
+[ "$WITH_AWG" -eq 1 ] && install_awg || true
+[ "$WITH_CRON" -eq 1 ] && install_cron || true
+[ "$WITH_WEEKLY" -eq 1 ] && setup_weekly_updates || true
+[ "$WITH_BOT" -eq 1 ] && install_bot || true
+
+ok "$(t X "Готово." "Done.")"
+ok "$(t X "Лог установки: /opt/var/log/keenetic-tg-bot-install.log" "Install log: /opt/var/log/keenetic-tg-bot-install.log")"
+cleanup

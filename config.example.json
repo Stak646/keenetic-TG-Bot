@@ -1,7 +1,7 @@
 {
   "bot_token": "PASTE_BOT_TOKEN_HERE",
   "admins": [
-    0
+    123456789
   ],
   "allow_chats": [],
   "command_timeout_sec": 30,

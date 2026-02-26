@@ -1,41 +1,36 @@
 #!/bin/sh
 set -e
-
 export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
-echo "[1/6] opkg update"
 opkg update
-
-echo "[2/6] install python3 + pip + basic tools"
 opkg install python3 python3-pip ca-certificates curl coreutils-nohup
 
-echo "[3/6] pip install pyTelegramBotAPI"
 python3 -m pip install --upgrade pip
 python3 -m pip install --no-cache-dir pyTelegramBotAPI
 
-echo "[4/6] deploy files"
-APP_DIR="/opt/keenetic-tg-bot"
-CFG_DIR="/opt/etc/keenetic-tg-bot"
-INIT_DIR="/opt/etc/init.d"
+# Target dir: prefer /etc, fallback to /opt/etc and symlink /etc -> /opt/etc if possible
+CFG_DIR="/etc/keenetic-tg-bot"
+if [ ! -d /etc ] || [ ! -w /etc ]; then
+  CFG_DIR="/opt/etc/keenetic-tg-bot"
+fi
+mkdir -p "$CFG_DIR" /opt/etc/init.d
 
-mkdir -p "$APP_DIR" "$CFG_DIR" "$INIT_DIR"
-
-cp -f ./bot.py "$APP_DIR/bot.py"
-chmod +x "$APP_DIR/bot.py"
+cp -f ./bot.py "$CFG_DIR/bot.py"
+chmod +x "$CFG_DIR/bot.py"
 
 if [ ! -f "$CFG_DIR/config.json" ]; then
   cp -f ./config.example.json "$CFG_DIR/config.json"
   echo "Created $CFG_DIR/config.json (EDIT IT: bot_token, admins!)"
-else
-  echo "Config already exists: $CFG_DIR/config.json"
 fi
 
-cp -f ./S99keenetic-tg-bot "$INIT_DIR/S99keenetic-tg-bot"
-chmod +x "$INIT_DIR/S99keenetic-tg-bot"
+cp -f ./S99keenetic-tg-bot /opt/etc/init.d/S99keenetic-tg-bot
+chmod +x /opt/etc/init.d/S99keenetic-tg-bot
 
-echo "[5/6] start service"
+# Create /etc symlink if we installed into /opt/etc
+if [ "$CFG_DIR" = "/opt/etc/keenetic-tg-bot" ] && [ ! -e /etc/keenetic-tg-bot ] && [ -w /etc ]; then
+  ln -s /opt/etc/keenetic-tg-bot /etc/keenetic-tg-bot || true
+fi
+
 /opt/etc/init.d/S99keenetic-tg-bot restart || true
-
-echo "[6/6] done"
-echo "Config: $CFG_DIR/config.json"
+/opt/etc/init.d/S99keenetic-tg-bot status || true
 echo "Logs: /opt/var/log/keenetic-tg-bot.log"

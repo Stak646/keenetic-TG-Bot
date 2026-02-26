@@ -37,7 +37,7 @@ from telebot.types import (
 # -----------------------------
 # Константы / Пути
 # -----------------------------
-DEFAULT_CONFIG_PATH = "/opt/etc/keenetic-tg-bot/config.json"
+DEFAULT_CONFIG_PATH = "/etc/keenetic-tg-bot/config.json"
 LOG_PATH = "/opt/var/log/keenetic-tg-bot.log"
 
 # HydraRoute Neo paths (из документации)

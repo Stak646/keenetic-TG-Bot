@@ -10,11 +10,21 @@
 
 export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
-APP_DIR="/opt/keenetic-tg-bot"
+CFG_DIR="/etc/keenetic-tg-bot"
+APP_DIR="$CFG_DIR"
 BOT="$APP_DIR/bot.py"
+CONFIG="$CFG_DIR/config.json"
+
 PIDFILE="/opt/var/run/keenetic-tg-bot.pid"
 LOGFILE="/opt/var/log/keenetic-tg-bot.log"
-CONFIG="/opt/etc/keenetic-tg-bot/config.json"
+
+# Fallback if /etc is not writable and we installed into /opt/etc
+if [ ! -f "$BOT" ] && [ -f "/opt/etc/keenetic-tg-bot/bot.py" ]; then
+  CFG_DIR="/opt/etc/keenetic-tg-bot"
+  APP_DIR="$CFG_DIR"
+  BOT="$APP_DIR/bot.py"
+  CONFIG="$CFG_DIR/config.json"
+fi
 
 if [ -x /opt/bin/python3 ]; then
   PY="/opt/bin/python3"
