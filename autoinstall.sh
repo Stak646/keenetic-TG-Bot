@@ -381,13 +381,13 @@ FLAGS="$WITH_BOT$WITH_HYDRA$WITH_NFQWS2$WITH_NFQWSWEB$WITH_AWG$WITH_CRON$WITH_WE
 
 if [ "$FLAGS" = "0000000" ]; then
   echo "Interactive mode."
-  installed_hydra || (ask "Install HydraRoute Neo?" && WITH_HYDRA=1)
-  installed_nfqws2 || (ask "Install NFQWS2?" && WITH_NFQWS2=1)
-  (installed_nfqws2 && installed_nfqwsweb) || (installed_nfqws2 && ask "Install NFQWS web UI?" && WITH_NFQWSWEB=1) || true
-  installed_awg || (ask "Install AWG Manager?" && WITH_AWG=1)
-  installed_cron || (ask "Install cron (for scheduling updates)?" && WITH_CRON=1)
-  [ "$WITH_CRON" -eq 1 ] && (ask "Setup weekly updates (Thu 06:00)?" && WITH_WEEKLY=1) || true
-  installed_bot || (ask "Install Telegram bot service?" && WITH_BOT=1)
+  installed_hydra || { ask "Install HydraRoute Neo?" && WITH_HYDRA=1; }
+  installed_nfqws2 || { ask "Install NFQWS2?" && WITH_NFQWS2=1; }
+  (installed_nfqws2 && installed_nfqwsweb) || { installed_nfqws2 && ask "Install NFQWS web UI?" && WITH_NFQWSWEB=1; } || true
+  installed_awg || { ask "Install AWG Manager?" && WITH_AWG=1; }
+  installed_cron || { ask "Install cron (for scheduling updates)?" && WITH_CRON=1; }
+  [ "$WITH_CRON" -eq 1 ] && { ask "Setup weekly updates (Thu 06:00)?" && WITH_WEEKLY=1; } || true
+  installed_bot || { ask "Install Telegram bot service?" && WITH_BOT=1; }
 else
   if [ "$ASSUME_YES" -eq 1 ] && [ "$FLAGS" = "0000000" ]; then
     installed_hydra || WITH_HYDRA=1
