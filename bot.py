@@ -18,6 +18,8 @@ import shutil
 import socket
 import subprocess
 import threading
+import urllib.request
+import urllib.parse
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -639,6 +641,80 @@ class HydraRouteDriver:
         return ok, msg + ("\nNeo перезапущен." if ok and self.is_neo_available() else "")
 
 
+    def parse_domain_conf(self) -> Tuple[bool, str, List[Tuple[int, str, str, List[str]]]]:
+        """Парсит domain.conf: (line_no, raw_line, target, domains[])."""
+        if not HR_DOMAIN_CONF.exists():
+            return False, "domain.conf не найден", []
+        try:
+            lines = HR_DOMAIN_CONF.read_text(encoding="utf-8", errors="replace").splitlines()
+            rules: List[Tuple[int, str, str, List[str]]] = []
+            for i, ln in enumerate(lines, start=1):
+                s = ln.strip()
+                if not s or s.startswith("#") or "/" not in s:
+                    continue
+                left, target = s.rsplit("/", 1)
+                domains = [x.strip() for x in left.split(",") if x.strip()]
+                rules.append((i, ln, target.strip(), domains))
+            return True, "OK", rules
+        except Exception as e:
+            return False, str(e), []
+
+    def domain_summary(self, limit_targets: int = 25) -> str:
+        ok, msg, rules = self.parse_domain_conf()
+        if not ok:
+            return msg
+        per_target: Dict[str, int] = {}
+        total = 0
+        for _, _, target, domains in rules:
+            per_target[target] = per_target.get(target, 0) + len(domains)
+            total += len(domains)
+        items = sorted(per_target.items(), key=lambda x: x[1], reverse=True)
+        head = [f"Всего доменов: {total}", f"Правил: {len(rules)}", ""]
+        for t, c in items[:limit_targets]:
+            head.append(f"{t}: {c}")
+        if len(items) > limit_targets:
+            head.append("… (обрезано)")
+        return "\n".join(head)
+
+    def find_domain(self, query: str, limit: int = 20) -> str:
+        query = query.strip().lower()
+        if not query:
+            return "Пустой запрос"
+        ok, msg, rules = self.parse_domain_conf()
+        if not ok:
+            return msg
+        hits: List[str] = []
+        for ln_no, _, target, domains in rules:
+            for d in domains:
+                if query in d.lower():
+                    hits.append(f"#{ln_no} -> {target}: {d}")
+                    break
+            if len(hits) >= limit:
+                break
+        return "\n".join(hits) if hits else "Совпадений не найдено."
+
+    def duplicates(self, limit: int = 50) -> str:
+        ok, msg, rules = self.parse_domain_conf()
+        if not ok:
+            return msg
+        seen: Dict[str, List[str]] = {}
+        for _, _, target, domains in rules:
+            for d in domains:
+                k = d.lower()
+                seen.setdefault(k, []).append(target)
+        dup = [(d, tgts) for d, tgts in seen.items() if len(set(tgts)) > 1]
+        dup.sort(key=lambda x: len(set(x[1])), reverse=True)
+        lines: List[str] = []
+        for d, tgts in dup[:limit]:
+            uniq = sorted(set(tgts))
+            lines.append(f"{d}: {', '.join(uniq)}")
+        if not lines:
+            return "Дубликатов не найдено."
+        if len(dup) > limit:
+            lines.append("… (обрезано)")
+        return "\n".join(lines)
+
+
 class NfqwsDriver:
     def __init__(self, sh: Shell, opkg: OpkgDriver, router: RouterDriver):
         self.sh = sh
@@ -837,6 +913,73 @@ class AwgDriver:
         except Exception as e:
             return False, str(e)
 
+
+    def api_request(self, endpoint: str, method: str = "GET", body: Optional[dict] = None, timeout: int = 8) -> Tuple[bool, str, Optional[dict]]:
+        """
+        Универсальный запрос к AWG Manager API.
+        endpoint: путь после /api, например '/tunnels/list'
+        Возвращает (ok, message, json_dict)
+        """
+        port = self.web_port()
+        if not endpoint.startswith("/"):
+            endpoint = "/" + endpoint
+        url = f"http://127.0.0.1:{port}/api{endpoint}"
+
+        data = None
+        headers = {
+            "Accept": "application/json",
+        }
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        try:
+            req = urllib.request.Request(url, data=data, method=method.upper(), headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                ct = resp.headers.get("Content-Type", "")
+        except Exception as e:
+            return False, f"HTTP error: {e}", None
+
+        if "application/json" not in (ct or ""):
+            # иногда может отдать html
+            return False, f"Non-JSON response ({ct}): {raw[:200]}", None
+
+        try:
+            j = json.loads(raw)
+        except Exception as e:
+            return False, f"JSON parse error: {e}", None
+
+        # Частый формат: {error, message, data}
+        if isinstance(j, dict) and (j.get("error") or j.get("success") is False):
+            return False, j.get("message") or j.get("error") or "API error", j
+
+        data_obj = j.get("data") if isinstance(j, dict) else j
+        return True, "OK", data_obj if isinstance(data_obj, (dict, list)) else j
+
+    def api_get(self, endpoint: str, timeout: int = 8) -> Tuple[bool, str, Optional[dict]]:
+        return self.api_request(endpoint, "GET", None, timeout)
+
+    def api_post(self, endpoint: str, body: Optional[dict] = None, timeout: int = 12) -> Tuple[bool, str, Optional[dict]]:
+        return self.api_request(endpoint, "POST", body, timeout)
+
+    def api_quick_summary(self) -> str:
+        ok1, msg1, sysinfo = self.api_get("/system/info")
+        ok2, msg2, wan = self.api_get("/wan/status")
+        ok3, msg3, st = self.api_get("/status/all")
+        parts = []
+        parts.append("API: " + ("✅" if (ok1 or ok2 or ok3) else "⚠️"))
+        if ok1 and isinstance(sysinfo, dict):
+            # попытка вытащить пару полей
+            parts.append(f"Версия: {sysinfo.get('version') or sysinfo.get('appVersion') or '?'}")
+            parts.append(f"Backend: {sysinfo.get('backend') or sysinfo.get('mode') or '?'}")
+        if ok2 and isinstance(wan, (dict, list)):
+            parts.append("WAN: OK")
+        if ok3 and isinstance(st, (dict, list)):
+            parts.append("Tunnels status: OK")
+        if not parts:
+            return f"API недоступен: {msg1 or msg2 or msg3}"
+        return "\n".join(parts)
     def wg_status(self) -> str:
         # Пытаемся показать wg/amneziawg
         if which("wg"):
@@ -1006,6 +1149,14 @@ def kb_hydra(variant: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton("⚙️ hrneo.conf", callback_data="hydra:file:hrneo.conf"),
         )
         kb.row(
+            InlineKeyboardButton("📚 Правила", callback_data="hydra:rules"),
+            InlineKeyboardButton("🔎 Поиск домена", callback_data="hydra:search_domain"),
+        )
+        kb.row(
+            InlineKeyboardButton("🧩 Дубликаты", callback_data="hydra:dupes"),
+            InlineKeyboardButton("⬆️ Импорт domain.conf", callback_data="hydra:import:domain.conf"),
+        )
+        kb.row(
             InlineKeyboardButton("➕ Add domain", callback_data="hydra:add_domain"),
             InlineKeyboardButton("➖ Remove domain", callback_data="hydra:rm_domain"),
         )
@@ -1035,8 +1186,16 @@ def kb_nfqws() -> InlineKeyboardMarkup:
     )
     kb.row(
         InlineKeyboardButton("📚 Lists stats", callback_data="nfqws:lists"),
-        InlineKeyboardButton("➕ user.list", callback_data="nfqws:add:user.list"),
-        InlineKeyboardButton("🚫 exclude.list", callback_data="nfqws:add:exclude.list"),
+        InlineKeyboardButton("📄 user.list", callback_data="nfqws:filelist:user.list"),
+        InlineKeyboardButton("📄 exclude.list", callback_data="nfqws:filelist:exclude.list"),
+    )
+    kb.row(
+        InlineKeyboardButton("📄 auto.list", callback_data="nfqws:filelist:auto.list"),
+        InlineKeyboardButton("⬆️ Импорт списка", callback_data="nfqws:import:list?confirm=1"),
+    )
+    kb.row(
+        InlineKeyboardButton("➕ + user.list", callback_data="nfqws:add:user.list"),
+        InlineKeyboardButton("🚫 + exclude.list", callback_data="nfqws:add:exclude.list"),
     )
     kb.row(
         InlineKeyboardButton("🧹 Clear auto.list", callback_data="nfqws:clear:auto.list?confirm=1"),
@@ -1056,6 +1215,22 @@ def kb_awg() -> InlineKeyboardMarkup:
         InlineKeyboardButton("💓 Health", callback_data="awg:health"),
     )
     kb.row(
+        InlineKeyboardButton("🧭 Туннели", callback_data="awg:api:tunnels"),
+        InlineKeyboardButton("📊 Status all", callback_data="awg:api:statusall"),
+    )
+    kb.row(
+        InlineKeyboardButton("🧾 API logs", callback_data="awg:api:logs"),
+        InlineKeyboardButton("ℹ️ System/WAN", callback_data="awg:api:systeminfo"),
+    )
+    kb.row(
+        InlineKeyboardButton("🧪 Diag run", callback_data="awg:api:diagr"),
+        InlineKeyboardButton("🧪 Diag status", callback_data="awg:api:diags"),
+    )
+    kb.row(
+        InlineKeyboardButton("⬆️ Update check", callback_data="awg:api:updatecheck"),
+        InlineKeyboardButton("⬆️ Apply update", callback_data="awg:api:updateapply?confirm=1"),
+    )
+    kb.row(
         InlineKeyboardButton("▶️ Start", callback_data="awg:start"),
         InlineKeyboardButton("⏹ Stop", callback_data="awg:stop"),
         InlineKeyboardButton("🔄 Restart", callback_data="awg:restart"),
@@ -1063,7 +1238,26 @@ def kb_awg() -> InlineKeyboardMarkup:
     kb.row(
         InlineKeyboardButton("🌐 WebUI", callback_data="awg:web"),
         InlineKeyboardButton("🧵 wg show", callback_data="awg:wg"),
-        InlineKeyboardButton("⚙️ settings.json", callback_data="awg:file:settings.json"),
+        Inlin
+
+def kb_awg_tunnel(idx: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
+    kb.row(
+        InlineKeyboardButton("▶️ Start", callback_data=f"awg:tunnelact:{idx}:start"),
+        InlineKeyboardButton("⏹ Stop", callback_data=f"awg:tunnelact:{idx}:stop"),
+        InlineKeyboardButton("🔄 Restart", callback_data=f"awg:tunnelact:{idx}:restart"),
+    )
+    kb.row(
+        InlineKeyboardButton("✅ Enable/Disable", callback_data=f"awg:tunnelact:{idx}:toggle"),
+        InlineKeyboardButton("🧭 Default route", callback_data=f"awg:tunnelact:{idx}:default"),
+    )
+    kb.row(
+        InlineKeyboardButton("📋 Details", callback_data=f"awg:tunnel:{idx}"),
+        InlineKeyboardButton("⬅️ Back", callback_data="awg:api:tunnels"),
+    )
+    kb.row(InlineKeyboardButton("🏠 Home", callback_data="m:main"))
+    return kb
+eKeyboardButton("⚙️ settings.json", callback_data="awg:file:settings.json"),
     )
     kb.row(
         InlineKeyboardButton("⬆️ Обновить (opkg)", callback_data="awg:update?confirm=1"),
@@ -1128,6 +1322,18 @@ def kb_confirm(action_cb: str, back_cb: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton("✅ Подтвердить", callback_data=action_cb),
         InlineKeyboardButton("❌ Отмена", callback_data=back_cb),
     )
+    return kb
+
+
+def kb_notice_actions(primary_cb: str = "m:main", restart_cb: str | None = None, logs_cb: str | None = None) -> InlineKeyboardMarkup:
+    """Inline-кнопки для уведомлений: Меню / Restart / Логи."""
+    kb = InlineKeyboardMarkup()
+    row = [InlineKeyboardButton("🏠 Меню", callback_data=primary_cb)]
+    if restart_cb:
+        row.append(InlineKeyboardButton("🔄 Restart", callback_data=restart_cb))
+    if logs_cb:
+        row.append(InlineKeyboardButton("📝 Логи", callback_data=logs_cb))
+    kb.row(*row)
     return kb
 
 
@@ -1240,11 +1446,11 @@ class Monitor(threading.Thread):
         return "
 ".join(parts)
 
-    def _notify_admins(self, text: str) -> None:
+    def _notify_admins(self, text: str, reply_markup: InlineKeyboardMarkup | None = None) -> None:
         # text already formatted HTML
         for uid in self.cfg.admins:
             try:
-                self.bot.send_message(uid, text, parse_mode="HTML", disable_web_page_preview=True)
+                self.bot.send_message(uid, text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=reply_markup)
             except Exception as e:
                 log_line(f"notify error to {uid}: {e}")
 
@@ -1287,11 +1493,24 @@ class Monitor(threading.Thread):
             if prev is None:
                 continue
             if prev and (not v) and self.cfg.notify_on_service_down and self._cooldown_ok(f"svc:{k}"):
-                self._notify_admins(self._fmt_notice(
-    title=f"🚨 <b>Сервис остановлен</b>: <code>{k}</code>",
-    summary_lines=[f"Статус: <b>STOPPED</b>"],
-    hint="Открой /menu → нужный раздел → Status/Restart"
-))
+                restart_cb = None
+                logs_cb = None
+                if k == "nfqws":
+                    restart_cb = "nfqws:restart"
+                    logs_cb = "logs:nfqws"
+                elif k == "hydra":
+                    restart_cb = "hydra:restart"
+                    logs_cb = "logs:hrneo"
+                elif k == "awg":
+                    restart_cb = "awg:restart"
+                self._notify_admins(
+                    self._fmt_notice(
+                        title=f"🚨 <b>Сервис остановлен</b>: <code>{k}</code>",
+                        summary_lines=[f"Статус: <b>STOPPED</b>"],
+                        hint="Открой /menu → нужный раздел → Status/Restart"
+                    ),
+                    reply_markup=kb_notice_actions(primary_cb="m:main", restart_cb=restart_cb, logs_cb=logs_cb)
+                )
 
     def _check_internet(self) -> None:
         ok, msg = self.router.internet_check()
@@ -1300,34 +1519,46 @@ class Monitor(threading.Thread):
         if prev is None:
             return
         if prev and (not ok) and self.cfg.notify_on_internet_down and self._cooldown_ok("net:down"):
-            self._notify_admins(self._fmt_notice(
-    title="🌐⚠️ <b>Интернет недоступен</b>",
-    summary_lines=["Проверка ping/DNS не прошла или нестабильна."],
-    details=msg,
-    hint="Проверь WAN/провайдера/маршрутизацию до api.telegram.org"
-))
+            self._notify_admins(
+                self._fmt_notice(
+                    title="🌐⚠️ <b>Интернет недоступен</b>",
+                    summary_lines=["Проверка ping/DNS не прошла или нестабильна."],
+                    details=msg,
+                    hint="Проверь WAN/провайдера/маршрутизацию до api.telegram.org"
+                ),
+                reply_markup=kb_notice_actions(primary_cb="router:net", logs_cb="logs:bot")
+            )
         if (not prev) and ok and self._cooldown_ok("net:up"):
-            self._notify_admins(self._fmt_notice(
-    title="🌐✅ <b>Интернет восстановлен</b>",
-    summary_lines=["Доступ до сети снова есть."],
-    hint="Если бот/сервисы были недоступны — проверь Status в меню"
-))
+            self._notify_admins(
+                self._fmt_notice(
+                    title="🌐✅ <b>Интернет восстановлен</b>",
+                    summary_lines=["Доступ до сети снова есть."],
+                    hint="Если бот/сервисы были недоступны — проверь Status в меню"
+                ),
+                reply_markup=kb_notice_actions(primary_cb="m:main")
+            )
 
     def _check_resources(self) -> None:
         l1, _, _ = self.router.loadavg()
         _, free_mb = self.router.disk_free_mb("/opt")
         if l1 >= self.cfg.cpu_load_threshold and self._cooldown_ok("res:load"):
-            self._notify_admins(self._fmt_notice(
-    title="📈⚠️ <b>Высокая нагрузка</b>",
-    summary_lines=[f"load1: <code>{l1:.2f}</code>"],
-    hint="Проверь процессы/логи (NFQWS2/Hydra/AWG), перезапусти при необходимости"
-))
+            self._notify_admins(
+                self._fmt_notice(
+                    title="📈⚠️ <b>Высокая нагрузка</b>",
+                    summary_lines=[f"load1: <code>{l1:.2f}</code>"],
+                    hint="Проверь процессы/логи (NFQWS2/Hydra/AWG), перезапусти при необходимости"
+                ),
+                reply_markup=kb_notice_actions(primary_cb="router:status", logs_cb="logs:bot")
+            )
         if free_mb <= self.cfg.disk_free_mb_threshold and self._cooldown_ok("res:disk"):
-            self._notify_admins(self._fmt_notice(
-    title="💾⚠️ <b>Мало места на /opt</b>",
-    summary_lines=[f"Свободно: <code>{free_mb} MB</code>"],
-    hint="Удалить лишнее: очистить логи/кэш, убрать ненужные пакеты"
-))
+            self._notify_admins(
+                self._fmt_notice(
+                    title="💾⚠️ <b>Мало места на /opt</b>",
+                    summary_lines=[f"Свободно: <code>{free_mb} MB</code>"],
+                    hint="Удалить лишнее: очистить логи/кэш, убрать ненужные пакеты"
+                ),
+                reply_markup=kb_notice_actions(primary_cb="m:opkg")
+            )
 
     def _check_opkg_updates(self) -> None:
         # делаем opkg update редко, но list-upgradable можно чаще после update
@@ -1338,12 +1569,15 @@ class Monitor(threading.Thread):
         if rc != 0:
             # не спамим
             if self._cooldown_ok("opkg:update_fail"):
-                self._notify_admins(self._fmt_notice(
-    title="📦⚠️ <b>Ошибка opkg update</b>",
-    summary_lines=["Не удалось обновить списки пакетов."],
-    details=out,
-    hint="Проверь интернет/DNS и повтори позже (OPKG → opkg update)"
-))
+                self._notify_admins(
+                self._fmt_notice(
+                    title="📦⚠️ <b>Ошибка opkg update</b>",
+                    summary_lines=["Не удалось обновить списки пакетов."],
+                    details=out,
+                    hint="Проверь интернет/DNS и повтори позже (OPKG → opkg update)"
+                ),
+                reply_markup=kb_notice_actions(primary_cb="opkg:update", logs_cb="logs:bot")
+            )
             return
         rc2, out2 = self.opkg.list_upgradable()
         if rc2 != 0:
@@ -1352,12 +1586,15 @@ class Monitor(threading.Thread):
             self._last_upgradable = out2.strip()
             count = len([ln for ln in out2.splitlines() if ln.strip()])
             preview = "\n".join(out2.splitlines()[:20])
-            self._notify_admins(self._fmt_notice(
-                title="📦⬆️ <b>Доступны обновления opkg</b>",
-                summary_lines=[f"Пакетов: <code>{count}</code>", "Первые строки:"],
-                details=preview,
-                hint="Открой /menu → OPKG → upgrade TARGET (или обнови нужные пакеты)"
-            ))
+            self._notify_admins(
+                self._fmt_notice(
+                    title="📦⬆️ <b>Доступны обновления opkg</b>",
+                    summary_lines=[f"Пакетов: <code>{count}</code>", "Первые строки:"],
+                    details=preview,
+                    hint="Открой /menu → OPKG → upgrade TARGET (или обнови нужные пакеты)"
+                ),
+                reply_markup=kb_notice_actions(primary_cb="m:opkg", restart_cb="opkg:upgrade?confirm=1")
+            )
 
     def _tail_new_errors(self, path: Path, pattern: re.Pattern) -> Optional[str]:
         try:
@@ -1393,12 +1630,23 @@ class Monitor(threading.Thread):
         for p, tag in [(Path(LOG_PATH), "bot"), (NFQWS_LOG, "nfqws2"), (HR_NEO_LOG_DEFAULT, "hrneo")]:
             hit = self._tail_new_errors(p, err_re)
             if hit and self._cooldown_ok(f"log:{tag}"):
-                self._notify_admins(self._fmt_notice(
-    title=f"🧾⚠️ <b>Ошибки в логах</b> (<code>{tag}</code>)",
-    summary_lines=["Найдены строки с ERROR/FATAL/PANIC (показан хвост)."],
-    details=hit,
-    hint="Открой /menu → Логи и проверь подробности; при необходимости Restart сервиса"
-))
+                restart_cb = None
+            logs_cb = "logs:bot"
+            if tag == "nfqws2":
+                restart_cb = "nfqws:restart"
+                logs_cb = "logs:nfqws"
+            elif tag == "hrneo":
+                restart_cb = "hydra:restart"
+                logs_cb = "logs:hrneo"
+            self._notify_admins(
+                self._fmt_notice(
+                    title=f"🧾⚠️ <b>Ошибки в логах</b> (<code>{tag}</code>)",
+                    summary_lines=["Найдены строки с ERROR/FATAL/PANIC (показан хвост)."],
+                    details=hit,
+                    hint="Открой /menu → Логи и проверь подробности; при необходимости Restart сервиса"
+                ),
+                reply_markup=kb_notice_actions(primary_cb="m:logs", restart_cb=restart_cb, logs_cb=logs_cb)
+            )
 
 
     def _handle_install_cb(self, chat_id: int, msg_id: int, data: str) -> None:
@@ -1550,6 +1798,7 @@ class App:
         self.awg = AwgDriver(self.sh, self.opkg, self.router)
 
         self.pending = PendingStore()
+        self.awg_tunnel_cache: Dict[Tuple[int, int], Dict[str, Any]] = {}
 
         self.monitor: Optional[Monitor] = None
         if cfg.monitor_enabled:
@@ -1646,6 +1895,19 @@ class App:
         caps["cron"] = Path("/opt/etc/init.d/S10cron").exists()
 
         return caps
+
+
+    def _awg_cache_set(self, chat_id: int, user_id: int, tunnels: List[dict], ttl_sec: int = 300) -> None:
+        self.awg_tunnel_cache[(chat_id, user_id)] = {"expires": time.time() + ttl_sec, "tunnels": tunnels}
+
+    def _awg_cache_get(self, chat_id: int, user_id: int) -> Optional[List[dict]]:
+        v = self.awg_tunnel_cache.get((chat_id, user_id))
+        if not v:
+            return None
+        if v.get("expires", 0) < time.time():
+            self.awg_tunnel_cache.pop((chat_id, user_id), None)
+            return None
+        return v.get("tunnels")
 
     def send_or_edit(
         self,
@@ -1744,6 +2006,23 @@ class App:
                     domain = m.text.strip()
                     ok, msg = self.hydra.remove_domain(domain)
                     self.bot.send_message(m.chat.id, ("✅ " if ok else "⚠️ ") + escape_html(msg))
+
+                elif p.kind == "hydra_search_domain_text" and m.content_type == "text":
+                    q = m.text.strip()
+                    res = self.hydra.find_domain(q)
+                    self.bot.send_message(m.chat.id, "<b>Поиск domain.conf</b>\n<pre><code>" + escape_html(res) + "</code></pre>")
+                elif p.kind == "hydra_import_domain_conf" and m.content_type == "document":
+                    dest = HR_DOMAIN_CONF
+                    self._handle_document_upload(m, dest)
+                    if self.hydra.is_neo_available():
+                        self.hydra.neo_cmd("restart")
+                    self.bot.send_message(m.chat.id, "✅ domain.conf импортирован (с бэкапом). Neo перезапущен.")
+                elif p.kind == "nfqws_import_list" and m.content_type == "document":
+                    list_name = p.data.get("list_name", "user.list")
+                    dest = NFQWS_LISTS_DIR / list_name
+                    self._handle_document_upload(m, dest)
+                    self.nfqws.init_action("reload")
+                    self.bot.send_message(m.chat.id, f"✅ Импортирован список: <code>{escape_html(list_name)}</code> (с бэкапом). Выполнен reload.")
                 elif p.kind == "nfqws_add_list_text" and m.content_type == "text":
                     list_name = p.data["list_name"]
                     domains = re.split(r"[,\s]+", m.text.strip())
@@ -1874,7 +2153,7 @@ class App:
 
         # awg
         if data.startswith("awg:"):
-            self._handle_awg_cb(chat_id, msg_id, data)
+            self._handle_awg_cb(chat_id, msg_id, data, cq.from_user.id)
             return
 
         # opkg
@@ -2047,6 +2326,24 @@ class App:
             else:
                 self.send_or_edit(chat_id, f"⚠️ {escape_html(msg)}", reply_markup=kb_hydra(variant), message_id=msg_id)
             return
+
+        if data == "hydra:rules":
+            res = self.hydra.domain_summary()
+            self.send_or_edit(chat_id, f"📚 <b>HydraRoute правила</b>\n<pre><code>{escape_html(res)}</code></pre>", reply_markup=kb_hydra(variant), message_id=msg_id)
+            return
+        if data == "hydra:dupes":
+            res = self.hydra.duplicates()
+            self.send_or_edit(chat_id, f"🧩 <b>Дубликаты доменов</b>\n<pre><code>{escape_html(res)}</code></pre>", reply_markup=kb_hydra(variant), message_id=msg_id)
+            return
+        if data == "hydra:search_domain":
+            self.pending.set(chat_id, user_id, "hydra_search_domain_text", {}, ttl_sec=300)
+            self.bot.send_message(chat_id, "Введите домен/подстроку для поиска в <code>domain.conf</code> (например: <code>telegram</code>).")
+            return
+        if data == "hydra:import:domain.conf":
+            self.pending.set(chat_id, user_id, "hydra_import_domain_conf", {}, ttl_sec=300)
+            self.bot.send_message(chat_id, "Отправьте файлом новый <code>domain.conf</code>. Я заменю текущий (с бэкапом) и перезапущу Neo.")
+            return
+
         if data == "hydra:add_domain":
             # просим текст
             self.pending.set(chat_id, user_id, "hydra_add_domain_text", {"target": "HydraRoute"}, ttl_sec=300)
@@ -2086,6 +2383,34 @@ class App:
         if data == "nfqws:clear:auto.list!do":
             ok, msg = self.nfqws.clear_list("auto.list")
             self.send_or_edit(chat_id, ("✅ " if ok else "⚠️ ") + escape_html(msg), reply_markup=kb_nfqws(), message_id=msg_id)
+            return
+
+
+        if data.startswith("nfqws:filelist:"):
+            name = data.split(":", 2)[2]
+            target = NFQWS_LISTS_DIR / name
+            if target.exists():
+                try:
+                    self.bot.send_document(chat_id, InputFile(str(target)), caption=name)
+                except Exception as e:
+                    self.bot.send_message(chat_id, f"⚠️ {escape_html(str(e))}")
+            else:
+                self.bot.send_message(chat_id, f"Файл не найден: <code>{escape_html(str(target))}</code>")
+            self.send_or_edit(chat_id, self.nfqws.status_text(), reply_markup=kb_nfqws(), message_id=msg_id)
+            return
+
+        if data == "nfqws:import:list?confirm=1":
+            self.send_or_edit(
+                chat_id,
+                "⬆️ <b>Импорт списка</b>\n"
+                "Я попрошу прислать файл и заменю <code>user.list</code> (с бэкапом), затем сделаю <code>reload</code>.",
+                reply_markup=kb_confirm("nfqws:import:list!do", "m:nfqws"),
+                message_id=msg_id,
+            )
+            return
+        if data == "nfqws:import:list!do":
+            self.pending.set(chat_id, user_id, "nfqws_import_list", {"list_name": "user.list"}, ttl_sec=300)
+            self.bot.send_message(chat_id, "Пришлите файлом новый <code>user.list</code> (я заменю текущий, сделаю бэкап и reload).")
             return
 
         if data == "nfqws:status":
@@ -2135,7 +2460,7 @@ class App:
                 self.send_or_edit(chat_id, f"📜 <b>nfqws2.log</b>\n<code>{escape_html(txt[-3500:])}</code>", reply_markup=kb_nfqws(), message_id=msg_id)
             return
 
-    def _handle_awg_cb(self, chat_id: int, msg_id: int, data: str) -> None:
+    def _handle_awg_cb(self, chat_id: int, msg_id: int, data: str, user_id: int) -> None:
         if data.startswith("awg:update?confirm=1"):
             self.send_or_edit(
                 chat_id,
@@ -2164,6 +2489,162 @@ class App:
             self.awg.init_action("stop")
             rc, out = self.opkg.remove("awg-manager")
             self.send_or_edit(chat_id, f"opkg remove rc={rc}\n<code>{escape_html(out[:3000])}</code>", reply_markup=kb_awg(), message_id=msg_id)
+            return
+
+        # --- AWG API (локальный, т.к. authDisabled=true) ---
+        if data == "awg:api:statusall":
+            ok, msg, obj = self.awg.api_get("/status/all")
+            payload = obj if obj is not None else {"error": msg}
+            pretty = json.dumps(payload, ensure_ascii=False, indent=2) if isinstance(payload, (dict, list)) else str(payload)
+            self.send_or_edit(chat_id, f"📊 <b>AWG status/all</b>\n<pre><code>{escape_html(pretty[:3500])}</code></pre>", reply_markup=kb_awg(), message_id=msg_id)
+            return
+
+        if data == "awg:api:updatecheck":
+            ok, msg, obj = self.awg.api_get("/system/update/check")
+            payload = obj if obj is not None else {"error": msg}
+            pretty = json.dumps(payload, ensure_ascii=False, indent=2) if isinstance(payload, (dict, list)) else str(payload)
+            self.send_or_edit(chat_id, f"⬆️ <b>AWG update/check</b>\n<pre><code>{escape_html(pretty[:3500])}</code></pre>", reply_markup=kb_awg(), message_id=msg_id)
+            return
+
+        if data == "awg:api:logs":
+            ok, msg, obj = self.awg.api_get("/logs")
+            payload = obj if obj is not None else {"error": msg}
+            pretty = json.dumps(payload, ensure_ascii=False, indent=2) if isinstance(payload, (dict, list)) else str(payload)
+            self.send_or_edit(chat_id, f"🧾 <b>AWG logs</b>\n<pre><code>{escape_html(pretty[-3500:])}</code></pre>", reply_markup=kb_awg(), message_id=msg_id)
+            return
+
+        if data == "awg:api:tunnels":
+            ok, msg, obj = self.awg.api_get("/tunnels/list")
+            if not ok or obj is None:
+                self.send_or_edit(chat_id, f"⚠️ tunnels/list: {escape_html(msg)}", reply_markup=kb_awg(), message_id=msg_id)
+                return
+            tunnels = obj if isinstance(obj, list) else (obj.get("items") if isinstance(obj, dict) else None)
+            if not isinstance(tunnels, list):
+                pretty = json.dumps(obj, ensure_ascii=False, indent=2) if isinstance(obj, (dict, list)) else str(obj)
+                self.send_or_edit(chat_id, f"⚠️ Неожиданный формат tunnels/list\n<pre><code>{escape_html(pretty[:3500])}</code></pre>", reply_markup=kb_awg(), message_id=msg_id)
+                return
+            self._awg_cache_set(chat_id, user_id, tunnels, ttl_sec=300)
+
+            lines = []
+            kb = InlineKeyboardMarkup()
+            max_btn = 10
+            for i, t in enumerate(tunnels[:max_btn]):
+                tid = t.get("id") or t.get("tunnelId") or t.get("interface") or str(i)
+                name = t.get("name") or t.get("title") or t.get("interfaceName") or tid
+                lines.append(f"{i}. {name} ({tid})")
+                kb.row(InlineKeyboardButton(f"{i}. {name}"[:50], callback_data=f"awg:tunnel:{i}"))
+            kb.row(InlineKeyboardButton("🏠 Home", callback_data="m:main"))
+
+            txt = "🧭 <b>AWG туннели</b>\n" + "<pre><code>" + escape_html("\n".join(lines)[:3500]) + "</code></pre>"
+            self.send_or_edit(chat_id, txt, reply_markup=kb, message_id=msg_id)
+            return
+
+        if data.startswith("awg:tunnel:"):
+            try:
+                idx = int(data.split(":")[2])
+            except Exception:
+                self.send_or_edit(chat_id, "⚠️ Некорректный индекс туннеля.", reply_markup=kb_awg(), message_id=msg_id)
+                return
+            tunnels = self._awg_cache_get(chat_id, user_id)
+            if not tunnels or idx < 0 or idx >= len(tunnels):
+                self.send_or_edit(chat_id, "⚠️ Кэш туннелей устарел. Открой 'Туннели' заново.", reply_markup=kb_awg(), message_id=msg_id)
+                return
+
+            t = tunnels[idx]
+            tid = t.get("id") or t.get("tunnelId") or t.get("interface") or str(idx)
+
+            # подтянем актуальный статус
+            ok_s, msg_s, st = self.awg.api_get("/status/all")
+            if ok_s and isinstance(st, list):
+                for item in st:
+                    if (item.get("id") or item.get("tunnelId")) == tid:
+                        # аккуратно "поверх" добавляем статусные поля
+                        for k, v in item.items():
+                            t[f"status_{k}"] = v
+                        break
+
+            pretty = json.dumps(t, ensure_ascii=False, indent=2)
+            self.send_or_edit(
+                chat_id,
+                f"📋 <b>Туннель #{idx}</b> (<code>{escape_html(str(tid))}</code>)\n<pre><code>{escape_html(pretty[:3500])}</code></pre>",
+                reply_markup=kb_awg_tunnel(idx),
+                message_id=msg_id,
+            )
+            return
+
+
+        if data.startswith("awg:tunnelact:"):
+            parts = data.split(":")
+            if len(parts) < 4:
+                self.send_or_edit(chat_id, "⚠️ Некорректная команда.", reply_markup=kb_awg(), message_id=msg_id)
+                return
+            idx = int(parts[2])
+            action = parts[3]
+            tunnels = self._awg_cache_get(chat_id, user_id)
+            if not tunnels or idx < 0 or idx >= len(tunnels):
+                self.send_or_edit(chat_id, "⚠️ Кэш туннелей устарел. Открой 'Туннели' заново.", reply_markup=kb_awg(), message_id=msg_id)
+                return
+            t = tunnels[idx]
+            tid = t.get("id") or t.get("tunnelId") or t.get("interface")
+            enc = urllib.parse.quote(str(tid))
+
+            if action == "start":
+                endpoint = f"/control/start?id={enc}"
+            elif action == "stop":
+                endpoint = f"/control/stop?id={enc}"
+            elif action == "restart":
+                endpoint = f"/control/restart?id={enc}"
+            elif action == "toggle":
+                endpoint = f"/control/toggle-enabled?id={enc}"
+            elif action == "default":
+                endpoint = f"/control/toggle-default-route?id={enc}"
+            else:
+                self.send_or_edit(chat_id, "⚠️ Неизвестное действие.", reply_markup=kb_awg_tunnel(idx), message_id=msg_id)
+                return
+
+            ok, msg, obj = self.awg.api_post(endpoint, body=None)
+            payload = obj if obj is not None else {"message": msg}
+            pretty = json.dumps(payload, ensure_ascii=False, indent=2) if isinstance(payload, (dict, list)) else str(payload)
+            self.send_or_edit(chat_id, f"✅ <b>{action}</b>\n<pre><code>{escape_html(pretty[:3500])}</code></pre>", reply_markup=kb_awg_tunnel(idx), message_id=msg_id)
+            return
+
+
+
+        if data == "awg:api:systeminfo":
+            ok1, msg1, info = self.awg.api_get("/system/info")
+            ok2, msg2, wan = self.awg.api_get("/wan/status")
+            payload = {"system/info": info if ok1 else {"error": msg1}, "wan/status": wan if ok2 else {"error": msg2}}
+            pretty = json.dumps(payload, ensure_ascii=False, indent=2)
+            self.send_or_edit(chat_id, f"ℹ️ <b>AWG system/wan</b>\n<pre><code>{escape_html(pretty[:3500])}</code></pre>", reply_markup=kb_awg(), message_id=msg_id)
+            return
+
+        if data == "awg:api:diagr":
+            ok, msg, obj = self.awg.api_post("/diagnostics/run", body=None)
+            payload = obj if obj is not None else {"error": msg}
+            pretty = json.dumps(payload, ensure_ascii=False, indent=2) if isinstance(payload, (dict, list)) else str(payload)
+            self.send_or_edit(chat_id, f"🧪 <b>AWG diagnostics/run</b>\n<pre><code>{escape_html(pretty[:3500])}</code></pre>", reply_markup=kb_awg(), message_id=msg_id)
+            return
+
+        if data == "awg:api:diags":
+            ok, msg, obj = self.awg.api_get("/diagnostics/status")
+            payload = obj if obj is not None else {"error": msg}
+            pretty = json.dumps(payload, ensure_ascii=False, indent=2) if isinstance(payload, (dict, list)) else str(payload)
+            self.send_or_edit(chat_id, f"🧪 <b>AWG diagnostics/status</b>\n<pre><code>{escape_html(pretty[:3500])}</code></pre>", reply_markup=kb_awg(), message_id=msg_id)
+            return
+
+        if data == "awg:api:updateapply?confirm=1":
+            self.send_or_edit(
+                chat_id,
+                "⬆️ <b>AWG update/apply</b>\nТочно применить обновление (это может перезапустить сервис/модули)?",
+                reply_markup=kb_confirm("awg:api:updateapply!do", "m:awg"),
+                message_id=msg_id,
+            )
+            return
+        if data == "awg:api:updateapply!do":
+            ok, msg, obj = self.awg.api_post("/system/update/apply", body=None)
+            payload = obj if obj is not None else {"error": msg}
+            pretty = json.dumps(payload, ensure_ascii=False, indent=2) if isinstance(payload, (dict, list)) else str(payload)
+            self.send_or_edit(chat_id, f"⬆️ <b>AWG update/apply</b>\n<pre><code>{escape_html(pretty[:3500])}</code></pre>", reply_markup=kb_awg(), message_id=msg_id)
             return
 
         if data == "awg:status":

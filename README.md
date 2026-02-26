@@ -73,3 +73,81 @@ sh autoinstall.sh --hydra --nfqws2 --nfqwsweb --awg
 
 ## Лицензия
 Добавь лицензию под свои нужды (MIT/Apache‑2.0 и т.д.).
+
+
+
+## One-liner установка с GitHub
+
+Интерактивно (скрипт сам определит недостающие модули и спросит):
+```sh
+opkg update && opkg install ca-certificates curl && \
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh
+```
+
+Без вопросов (поставить всё недостающее автоматически):
+```sh
+opkg update && opkg install ca-certificates curl && \
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --yes
+```
+
+
+## Новые функции (реализовано)
+- Уведомления стали “кликабельными”: в уведомлениях есть кнопки **Меню / Restart / Логи**.
+- HydraRoute Neo:
+  - 📚 сводка правил `domain.conf` (кол-во доменов по целям)
+  - 🔎 поиск домена по подстроке
+  - 🧩 поиск дубликатов доменов между целями
+  - ⬆️ импорт нового `domain.conf` файлом через Telegram (с бэкапом и перезапуском Neo)
+- NFQWS2:
+  - 📄 скачивание `user.list / exclude.list / auto.list`
+  - ⬆️ импорт нового `user.list` файлом (с бэкапом и `reload`)
+- Уведомления теперь приходят с понятным текстом и подсказкой “что сделать”.
+
+
+## AWG Manager API (поддерживается)
+Если AWG Manager отдаёт Swagger/OpenAPI (у тебя так и есть), бот умеет:
+- показывать список туннелей
+- показывать детали туннеля
+- start/stop/restart, toggle enabled, toggle default route
+- показывать status/all, logs, update/check
+
+Проверка на роутере:
+```sh
+PORT=2222
+curl -s http://127.0.0.1:${PORT}/api/health ; echo
+curl -s http://127.0.0.1:${PORT}/swagger/v1/swagger.json | head -n 5
+```
+
+Если `openapi.json` отдаёт HTML, используй `swagger/v1/swagger.json` — это реальный JSON со схемой.
+
+
+
+## Загрузка в GitHub (Windows 11, PowerShell)
+
+### Первый залив в пустой репозиторий
+1) Распакуй проект в папку, например: `C:\work\keenetic-TG-Bot-src`
+2) Выполни:
+
+```powershell
+cd C:\work
+git clone https://github.com/Stak646/keenetic-TG-Bot.git
+cd keenetic-TG-Bot
+
+robocopy C:\work\keenetic-TG-Bot-src . /E
+
+git add .
+git commit -m "Initial import"
+git branch -M main
+git push -u origin main
+```
+
+### Обновление (после правок)
+```powershell
+cd C:\work\keenetic-TG-Bot
+git pull
+# внеси изменения/замени файлы
+git add .
+git commit -m "Update"
+git push
+```
+
