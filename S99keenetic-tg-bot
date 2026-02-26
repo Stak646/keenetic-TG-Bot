@@ -8,12 +8,21 @@
 # Short-Description: Keenetic Telegram Router Bot
 ### END INIT INFO
 
+export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
 APP_DIR="/opt/keenetic-tg-bot"
-PY="/opt/bin/python3"
 BOT="$APP_DIR/bot.py"
 PIDFILE="/opt/var/run/keenetic-tg-bot.pid"
 LOGFILE="/opt/var/log/keenetic-tg-bot.log"
 CONFIG="/opt/etc/keenetic-tg-bot/config.json"
+
+if [ -x /opt/bin/python3 ]; then
+  PY="/opt/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then
+  PY="$(command -v python3)"
+else
+  PY="python3"
+fi
 
 export BOT_CONFIG="$CONFIG"
 export PYTHONUNBUFFERED=1
@@ -23,9 +32,29 @@ start() {
     echo "Already running"
     return 0
   fi
+
   mkdir -p /opt/var/run /opt/var/log
+
+  if [ ! -f "$BOT" ]; then
+    echo "Bot file not found: $BOT"
+    return 1
+  fi
+
+  if [ ! -f "$CONFIG" ]; then
+    echo "Config not found: $CONFIG"
+    echo "Run autoinstall.sh --bot --reconfig (or edit config.json) first."
+    return 1
+  fi
+
   echo "Starting keenetic-tg-bot..."
-  nohup "$PY" "$BOT" >> "$LOGFILE" 2>&1 &
+  if command -v nohup >/dev/null 2>&1; then
+    nohup "$PY" "$BOT" >> "$LOGFILE" 2>&1 &
+  elif command -v setsid >/dev/null 2>&1; then
+    setsid "$PY" "$BOT" >> "$LOGFILE" 2>&1 &
+  else
+    "$PY" "$BOT" >> "$LOGFILE" 2>&1 &
+  fi
+
   echo $! > "$PIDFILE"
   echo "Started with PID $(cat "$PIDFILE")"
 }
@@ -36,7 +65,6 @@ stop() {
     if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
       echo "Stopping PID $PID..."
       kill "$PID"
-      # wait a bit
       sleep 2
       kill -9 "$PID" 2>/dev/null || true
     fi

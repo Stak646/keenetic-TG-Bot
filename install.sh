@@ -1,12 +1,13 @@
 #!/bin/sh
 set -e
 
+export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
 echo "[1/6] opkg update"
 opkg update
 
 echo "[2/6] install python3 + pip + basic tools"
-# набор может отличаться по сборке Entware; если чего-то нет — удалите из списка
-opkg install python3 python3-pip ca-certificates curl
+opkg install python3 python3-pip ca-certificates curl coreutils-nohup
 
 echo "[3/6] pip install pyTelegramBotAPI"
 python3 -m pip install --upgrade pip
@@ -33,8 +34,8 @@ cp -f ./S99keenetic-tg-bot "$INIT_DIR/S99keenetic-tg-bot"
 chmod +x "$INIT_DIR/S99keenetic-tg-bot"
 
 echo "[5/6] start service"
-"$INIT_DIR/S99keenetic-tg-bot" restart || true
+/opt/etc/init.d/S99keenetic-tg-bot restart || true
 
 echo "[6/6] done"
-echo "Edit config at: $CFG_DIR/config.json"
+echo "Config: $CFG_DIR/config.json"
 echo "Logs: /opt/var/log/keenetic-tg-bot.log"
