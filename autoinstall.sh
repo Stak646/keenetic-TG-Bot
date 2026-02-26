@@ -56,7 +56,7 @@ fetch_file() {
   URL="$(raw_url "$1")"
   DEST="$2"
   mkdir -p "$(dirname "$DEST")"
-  echo "download: $URL -> $DEST"
+  echo "download: $URL -> $DEST" >&2
   curl -fsSL "$URL" -o "$DEST"
 }
 
@@ -86,21 +86,32 @@ ensure_repo_files() {
 is_tty() { [ -t 0 ]; }
 
 prompt_token_admin() {
+  TTY="/dev/tty"
   # TG_TOKEN / TG_ADMIN_ID may already be set via flags
   if [ -z "$TG_TOKEN" ]; then
     echo ""
     echo "Telegram Bot Token:"
     echo "  Получи у @BotFather (команда /newbot), потом скопируй токен вида 123456:ABC-DEF..."
-    printf "Введите bot_token: "
-    read TG_TOKEN || true
+    if [ -r "$TTY" ]; then
+      printf "Введите bot_token: " > "$TTY"
+      read TG_TOKEN < "$TTY" || true
+    else
+      printf "Введите bot_token: "
+      read TG_TOKEN || true
+    fi
   fi
 
   if [ -z "$TG_ADMIN_ID" ]; then
     echo ""
     echo "Telegram user_id (число):"
     echo "  Проще всего — написать @userinfobot и взять поле Id."
-    printf "Введите admin user_id: "
-    read TG_ADMIN_ID || true
+    if [ -r "$TTY" ]; then
+      printf "Введите admin user_id: " > "$TTY"
+      read TG_ADMIN_ID < "$TTY" || true
+    else
+      printf "Введите admin user_id: "
+      read TG_ADMIN_ID || true
+    fi
   fi
 
   # basic validation
@@ -150,7 +161,7 @@ EOF
 }
 
 
-installed_bot() { [ -f /opt/keenetic-tg-bot/bot.py ] && [ -x /opt/etc/init.d/S99keenetic-tg-bot ]; }
+installed_bot() { ([ -f /opt/keenetic-tg-bot/bot.py ] || [ -f /opt/etc/keenetic-tg-bot/bot.py ]) && [ -x /opt/etc/init.d/S99keenetic-tg-bot ]; }
 installed_hydra() { has_cmd neo || has_cmd hr || is_exec /opt/bin/neo || is_exec /opt/bin/hr; }
 installed_nfqws2() { is_exec /opt/etc/init.d/S51nfqws2 || has_cmd nfqws2 || is_exec /opt/bin/nfqws2; }
 installed_nfqwsweb() { [ -f /opt/etc/nfqws_web.conf ] || [ -d /opt/share/nfqws-web ] || /opt/bin/opkg list-installed 2>/dev/null | grep -q '^nfqws-keenetic-web '; }
@@ -170,8 +181,18 @@ say_status() {
 
 ask() {
   if [ "$ASSUME_YES" -eq 1 ]; then return 0; fi
-  printf "%s [y/N]: " "$1"
-  read ans || true
+
+  # если скрипт запущен через pipe (curl | sh), stdin не интерактивный.
+  # читаем ответы из /dev/tty, чтобы вопросы работали.
+  TTY="/dev/tty"
+  if [ -r "$TTY" ]; then
+    printf "%s [y/N]: " "$1" > "$TTY"
+    read ans < "$TTY" || true
+  else
+    printf "%s [y/N]: " "$1"
+    read ans || true
+  fi
+
   case "$ans" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 

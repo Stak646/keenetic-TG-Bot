@@ -75,6 +75,17 @@ curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinst
 
 `weekly-update.sh` обновляет пакеты через `opkg` и **обновляет файлы бота из GitHub**, затем перезапускает сервисы.
 
+
+## Важно про ввод (curl | sh)
+Если запускаешь установку так: `curl ... | sh`, то обычный `read` читает из pipe.
+Скрипт уже читает ответы из `/dev/tty`, поэтому вопросы работают.
+
+Не используй угловые скобки `< >` в командах. Пиши так:
+```sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | \
+sh -s -- --bot --yes --token 123456:ABCDEF --admin 599497434
+```
+
 ## Безопасность
 - Бот **не выполняет произвольные команды** из чата.
 - Доступ ограничен списком `admins`.
