@@ -25,6 +25,10 @@ WITH_AWG=0
 WITH_CRON=0
 WITH_WEEKLY=0
 ASSUME_YES=0
+LOCAL_ONLY=0
+TG_TOKEN=""
+TG_ADMIN_ID=""
+RECONFIG=0
 
 REPO="Stak646/keenetic-TG-Bot"
 BRANCH="main"
@@ -60,13 +64,91 @@ ensure_repo_files() {
   # ensure bot artifacts exist locally (for bot installation)
   TMP="/opt/tmp/keenetic-tg-bot-installer"
   mkdir -p "$TMP"
-  # download only if missing locally in current directory
-  if [ ! -f "./bot.py" ]; then fetch_file "bot.py" "$TMP/bot.py"; else cp -f "./bot.py" "$TMP/bot.py"; fi
-  if [ ! -f "./config.example.json" ]; then fetch_file "config.example.json" "$TMP/config.example.json"; else cp -f "./config.example.json" "$TMP/config.example.json"; fi
-  if [ ! -f "./S99keenetic-tg-bot" ]; then fetch_file "S99keenetic-tg-bot" "$TMP/S99keenetic-tg-bot"; else cp -f "./S99keenetic-tg-bot" "$TMP/S99keenetic-tg-bot"; fi
-  if [ ! -f "./install.sh" ]; then fetch_file "install.sh" "$TMP/install.sh"; else cp -f "./install.sh" "$TMP/install.sh"; fi
+
+  if [ "$LOCAL_ONLY" -eq 1 ]; then
+    # use local files from current directory
+    cp -f ./bot.py "$TMP/bot.py"
+    cp -f ./config.example.json "$TMP/config.example.json"
+    cp -f ./S99keenetic-tg-bot "$TMP/S99keenetic-tg-bot"
+    cp -f ./install.sh "$TMP/install.sh"
+    echo "$TMP"
+    return
+  fi
+
+  # Always fetch свежие файлы из GitHub (важно для автообновления)
+  fetch_file "bot.py" "$TMP/bot.py"
+  fetch_file "config.example.json" "$TMP/config.example.json"
+  fetch_file "S99keenetic-tg-bot" "$TMP/S99keenetic-tg-bot"
+  fetch_file "install.sh" "$TMP/install.sh"
   echo "$TMP"
 }
+
+is_tty() { [ -t 0 ]; }
+
+prompt_token_admin() {
+  # TG_TOKEN / TG_ADMIN_ID may already be set via flags
+  if [ -z "$TG_TOKEN" ]; then
+    echo ""
+    echo "Telegram Bot Token:"
+    echo "  Получи у @BotFather (команда /newbot), потом скопируй токен вида 123456:ABC-DEF..."
+    printf "Введите bot_token: "
+    read TG_TOKEN || true
+  fi
+
+  if [ -z "$TG_ADMIN_ID" ]; then
+    echo ""
+    echo "Telegram user_id (число):"
+    echo "  Проще всего — написать @userinfobot и взять поле Id."
+    printf "Введите admin user_id: "
+    read TG_ADMIN_ID || true
+  fi
+
+  # basic validation
+  case "$TG_ADMIN_ID" in
+    ''|*[!0-9]*)
+      echo "ERROR: admin user_id должен быть числом."
+      exit 2
+      ;;
+  esac
+
+  if [ -z "$TG_TOKEN" ]; then
+    echo "ERROR: bot_token пустой."
+    exit 2
+  fi
+}
+
+write_config_json() {
+  CFG_DIR="/opt/etc/keenetic-tg-bot"
+  mkdir -p "$CFG_DIR"
+  CFG="$CFG_DIR/config.json"
+
+  cat > "$CFG" <<EOF
+{
+  "bot_token": "${TG_TOKEN}",
+  "admins": [${TG_ADMIN_ID}],
+  "allow_chats": [],
+  "command_timeout_sec": 30,
+  "poll_interval_sec": 2,
+  "monitor": {
+    "enabled": true,
+    "interval_sec": 60,
+    "opkg_update_interval_sec": 86400,
+    "internet_check_interval_sec": 300,
+    "cpu_load_threshold": 3.5,
+    "disk_free_mb_threshold": 200
+  },
+  "notify": {
+    "updates": true,
+    "service_down": true,
+    "internet_down": true,
+    "log_errors": true,
+    "cooldown_sec": 300
+  }
+}
+EOF
+  echo "Saved config: $CFG"
+}
+
 
 installed_bot() { [ -f /opt/keenetic-tg-bot/bot.py ] && [ -x /opt/etc/init.d/S99keenetic-tg-bot ]; }
 installed_hydra() { has_cmd neo || has_cmd hr || is_exec /opt/bin/neo || is_exec /opt/bin/hr; }
@@ -114,13 +196,15 @@ install_bot() {
   mkdir -p "$APP_DIR" "$CFG_DIR" "$INIT_DIR"
   cp -f "$SRC_DIR/bot.py" "$APP_DIR/bot.py"
   chmod +x "$APP_DIR/bot.py"
-
-  if [ ! -f "$CFG_DIR/config.json" ]; then
-    cp -f "$SRC_DIR/config.example.json" "$CFG_DIR/config.json"
-    echo "Created $CFG_DIR/config.json (EDIT IT: bot_token, admins!)"
+  CFG="$CFG_DIR/config.json"
+  if [ "$RECONFIG" -eq 1 ] || [ ! -f "$CFG" ]; then
+    echo "[BOT] configuring Telegram credentials..."
+    prompt_token_admin
+    write_config_json
   else
-    echo "Config exists: $CFG_DIR/config.json"
+    echo "Config exists: $CFG (skip). Use --reconfig to rewrite."
   fi
+
 
   cp -f "$SRC_DIR/S99keenetic-tg-bot" "$INIT_DIR/S99keenetic-tg-bot"
   chmod +x "$INIT_DIR/S99keenetic-tg-bot"
@@ -183,14 +267,43 @@ setup_weekly_updates() {
 #!/bin/sh
 LOG="/opt/var/log/weekly-update.log"
 mkdir -p /opt/var/log
+
+REPO="Stak646/keenetic-TG-Bot"
+BRANCH="main"
+
+raw() {
+  echo "https://raw.githubusercontent.com/${REPO}/${BRANCH}/$1"
+}
+
+update_bot_files() {
+  # обновляем файлы бота из GitHub (config.json не трогаем)
+  TMP="/opt/tmp/keenetic-tg-bot-weekly"
+  mkdir -p "$TMP"
+
+  curl -fsSL "$(raw bot.py)" -o "$TMP/bot.py" || return 0
+  curl -fsSL "$(raw S99keenetic-tg-bot)" -o "$TMP/S99keenetic-tg-bot" || return 0
+
+  mkdir -p /opt/keenetic-tg-bot /opt/etc/init.d
+  cp -f "$TMP/bot.py" /opt/keenetic-tg-bot/bot.py
+  chmod +x /opt/keenetic-tg-bot/bot.py
+  cp -f "$TMP/S99keenetic-tg-bot" /opt/etc/init.d/S99keenetic-tg-bot
+  chmod +x /opt/etc/init.d/S99keenetic-tg-bot
+}
+
 {
   echo "===== $(date) weekly update ====="
+
   opkg update
   opkg upgrade hrneo hrweb nfqws2-keenetic nfqws-keenetic-web awg-manager coreutils-nohup python3 python3-pip || true
+
+  # обновить файлы бота из GitHub
+  update_bot_files || true
+
   command -v neo >/dev/null 2>&1 && neo restart || true
   [ -x /opt/etc/init.d/S51nfqws2 ] && /opt/etc/init.d/S51nfqws2 restart || true
   [ -x /opt/etc/init.d/S99awg-manager ] && /opt/etc/init.d/S99awg-manager restart || true
   [ -x /opt/etc/init.d/S99keenetic-tg-bot ] && /opt/etc/init.d/S99keenetic-tg-bot restart || true
+
   echo "OK"
   echo
 } >> "$LOG" 2>&1
@@ -212,6 +325,8 @@ usage() {
   echo "  sh autoinstall.sh                 # interactive"
   echo "  sh autoinstall.sh --yes           # install everything missing"
   echo "  sh autoinstall.sh --repo user/repo --branch main --yes"
+  echo "  sh autoinstall.sh --bot --token <BOT_TOKEN> --admin <USER_ID> --yes"
+  echo "  sh autoinstall.sh --reconfig   # переписать config.json"
   echo "  curl -Ls https://raw.githubusercontent.com/$REPO/$BRANCH/autoinstall.sh | sh -s -- --yes"
 }
 
@@ -221,6 +336,10 @@ for a in "$@"; do
     --yes) ASSUME_YES=1 ;;
     --repo) shift; REPO="$1" ;;
     --branch) shift; BRANCH="$1" ;;
+    --local) LOCAL_ONLY=1 ;;
+    --token) shift; TG_TOKEN="$1" ;;
+    --admin) shift; TG_ADMIN_ID="$1" ;;
+    --reconfig) RECONFIG=1 ;;
     --bot) WITH_BOT=1 ;;
     --hydra) WITH_HYDRA=1 ;;
     --nfqws2) WITH_NFQWS2=1 ;;

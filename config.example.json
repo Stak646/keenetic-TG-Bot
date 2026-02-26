@@ -1,7 +1,7 @@
 {
-  "bot_token": "PUT_YOUR_TELEGRAM_BOT_TOKEN_HERE",
+  "bot_token": "PASTE_BOT_TOKEN_HERE",
   "admins": [
-    123456789
+    0
   ],
   "allow_chats": [],
   "command_timeout_sec": 30,
