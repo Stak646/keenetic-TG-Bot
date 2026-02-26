@@ -109,19 +109,25 @@ fetch_file() {
   mkdir -p "$(dirname "$dest")"
   if [ "$DEBUG" -eq 1 ]; then
     say "download: $url -> $dest"
-  else
-    dbg "download: $url -> $dest"
   fi
   curl -fsSL "$url" -o "$dest" >> "$LOGFILE" 2>&1
 }
 
 # prefer /etc, fallback /opt/etc; create /etc symlink if possible
 pick_cfg_dir() {
-  CFG_DIR="/etc/keenetic-tg-bot"
-  if [ ! -d /etc ] || [ ! -w /etc ]; then
-    CFG_DIR="/opt/etc/keenetic-tg-bot"
-  fi
-  echo "$CFG_DIR"
+  # /etc on Keenetic is often mounted read-only. `test -w /etc` is NOT enough.
+  # We probe by creating a temp file.
+  for d in /etc/keenetic-tg-bot /opt/etc/keenetic-tg-bot; do
+    mkdir -p "$d" >/dev/null 2>&1 || continue
+    tfile="$d/.rwtest.$$"
+    if ( : > "$tfile" ) 2>/dev/null; then
+      rm -f "$tfile" >/dev/null 2>&1 || true
+      echo "$d"
+      return 0
+    fi
+  done
+  mkdir -p /opt/etc/keenetic-tg-bot >/dev/null 2>&1 || true
+  echo "/opt/etc/keenetic-tg-bot"
 }
 
 ensure_repo_files() {

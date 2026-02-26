@@ -2,17 +2,27 @@
 set -e
 export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
+pick_cfg_dir() {
+  for d in /etc/keenetic-tg-bot /opt/etc/keenetic-tg-bot; do
+    mkdir -p "$d" >/dev/null 2>&1 || continue
+    tfile="$d/.rwtest.$$"
+    if ( : > "$tfile" ) 2>/dev/null; then
+      rm -f "$tfile" >/dev/null 2>&1 || true
+      echo "$d"
+      return 0
+    fi
+  done
+  mkdir -p /opt/etc/keenetic-tg-bot >/dev/null 2>&1 || true
+  echo "/opt/etc/keenetic-tg-bot"
+}
+
 opkg update
 opkg install python3 python3-pip ca-certificates curl coreutils-nohup
 
 python3 -m pip install --upgrade pip
 python3 -m pip install --no-cache-dir pyTelegramBotAPI
 
-# Target dir: prefer /etc, fallback to /opt/etc and symlink /etc -> /opt/etc if possible
-CFG_DIR="/etc/keenetic-tg-bot"
-if [ ! -d /etc ] || [ ! -w /etc ]; then
-  CFG_DIR="/opt/etc/keenetic-tg-bot"
-fi
+CFG_DIR="$(pick_cfg_dir)"
 mkdir -p "$CFG_DIR" /opt/etc/init.d
 
 cp -f ./bot.py "$CFG_DIR/bot.py"
@@ -20,17 +30,11 @@ chmod +x "$CFG_DIR/bot.py"
 
 if [ ! -f "$CFG_DIR/config.json" ]; then
   cp -f ./config.example.json "$CFG_DIR/config.json"
-  echo "Created $CFG_DIR/config.json (EDIT IT: bot_token, admins!)"
+  echo "Created $CFG_DIR/config.json"
 fi
 
 cp -f ./S99keenetic-tg-bot /opt/etc/init.d/S99keenetic-tg-bot
 chmod +x /opt/etc/init.d/S99keenetic-tg-bot
 
-# Create /etc symlink if we installed into /opt/etc
-if [ "$CFG_DIR" = "/opt/etc/keenetic-tg-bot" ] && [ ! -e /etc/keenetic-tg-bot ] && [ -w /etc ]; then
-  ln -s /opt/etc/keenetic-tg-bot /etc/keenetic-tg-bot || true
-fi
-
 /opt/etc/init.d/S99keenetic-tg-bot restart || true
 /opt/etc/init.d/S99keenetic-tg-bot status || true
-echo "Logs: /opt/var/log/keenetic-tg-bot.log"

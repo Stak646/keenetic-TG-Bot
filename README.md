@@ -29,7 +29,7 @@ curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinst
 Easiest: Telegram → **@userinfobot** → `Id: ...`
 
 ## Paths after install
-- Bot code + config: `/etc/keenetic-tg-bot/` (fallback: `/opt/etc/keenetic-tg-bot/` if `/etc` is not writable)
+- Bot code + config: `/etc/keenetic-tg-bot/` (on Keenetic /etc is often read-only, so installer will use `/opt/etc/keenetic-tg-bot/` automatically)
 - init script: `/opt/etc/init.d/S99keenetic-tg-bot`
 - bot log: `/opt/var/log/keenetic-tg-bot.log`
 - install log: `/opt/var/log/keenetic-tg-bot-install.log`

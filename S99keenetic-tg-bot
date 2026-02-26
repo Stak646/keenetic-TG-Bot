@@ -1,62 +1,32 @@
 #!/bin/sh
-### BEGIN INIT INFO
-# Provides:          keenetic-tg-bot
-# Required-Start:    $network $remote_fs
-# Required-Stop:     $network $remote_fs
-# Default-Start:     S
-# Default-Stop:
-# Short-Description: Keenetic Telegram Router Bot
-### END INIT INFO
-
 export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 CFG_DIR="/etc/keenetic-tg-bot"
-APP_DIR="$CFG_DIR"
-BOT="$APP_DIR/bot.py"
+[ -f "$CFG_DIR/bot.py" ] || CFG_DIR="/opt/etc/keenetic-tg-bot"
+
+BOT="$CFG_DIR/bot.py"
 CONFIG="$CFG_DIR/config.json"
 
 PIDFILE="/opt/var/run/keenetic-tg-bot.pid"
 LOGFILE="/opt/var/log/keenetic-tg-bot.log"
 
-# Fallback if /etc is not writable and we installed into /opt/etc
-if [ ! -f "$BOT" ] && [ -f "/opt/etc/keenetic-tg-bot/bot.py" ]; then
-  CFG_DIR="/opt/etc/keenetic-tg-bot"
-  APP_DIR="$CFG_DIR"
-  BOT="$APP_DIR/bot.py"
-  CONFIG="$CFG_DIR/config.json"
-fi
-
-if [ -x /opt/bin/python3 ]; then
-  PY="/opt/bin/python3"
-elif command -v python3 >/dev/null 2>&1; then
-  PY="$(command -v python3)"
-else
-  PY="python3"
-fi
+PY="/opt/bin/python3"
+[ -x "$PY" ] || PY="$(command -v python3 2>/dev/null || echo python3)"
 
 export BOT_CONFIG="$CONFIG"
 export PYTHONUNBUFFERED=1
 
 start() {
+  mkdir -p /opt/var/run /opt/var/log
+
+  [ -f "$BOT" ] || { echo "Bot file not found: $BOT"; return 1; }
+  [ -f "$CONFIG" ] || { echo "Config not found: $CONFIG"; return 1; }
+
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
     echo "Already running"
     return 0
   fi
 
-  mkdir -p /opt/var/run /opt/var/log
-
-  if [ ! -f "$BOT" ]; then
-    echo "Bot file not found: $BOT"
-    return 1
-  fi
-
-  if [ ! -f "$CONFIG" ]; then
-    echo "Config not found: $CONFIG"
-    echo "Run autoinstall.sh --bot --reconfig (or edit config.json) first."
-    return 1
-  fi
-
-  echo "Starting keenetic-tg-bot..."
   if command -v nohup >/dev/null 2>&1; then
     nohup "$PY" "$BOT" >> "$LOGFILE" 2>&1 &
   elif command -v setsid >/dev/null 2>&1; then
@@ -66,22 +36,18 @@ start() {
   fi
 
   echo $! > "$PIDFILE"
-  echo "Started with PID $(cat "$PIDFILE")"
+  echo "Started PID $(cat "$PIDFILE")"
 }
 
 stop() {
   if [ -f "$PIDFILE" ]; then
     PID="$(cat "$PIDFILE" 2>/dev/null)"
-    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-      echo "Stopping PID $PID..."
-      kill "$PID"
-      sleep 2
-      kill -9 "$PID" 2>/dev/null || true
-    fi
+    kill "$PID" 2>/dev/null || true
+    sleep 1
+    kill -9 "$PID" 2>/dev/null || true
     rm -f "$PIDFILE"
-  else
-    echo "Not running"
   fi
+  echo "Stopped"
 }
 
 status() {
@@ -95,7 +61,6 @@ status() {
 
 restart() {
   stop
-  sleep 1
   start
 }
 

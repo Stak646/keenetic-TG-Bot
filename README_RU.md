@@ -29,7 +29,7 @@ curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinst
 Проще всего: Telegram → **@userinfobot** → поле `Id: ...`
 
 ## Где лежат файлы после установки
-- Код и конфиг: `/etc/keenetic-tg-bot/` (если `/etc` недоступен — `/opt/etc/keenetic-tg-bot/`)
+- Код и конфиг: `/etc/keenetic-tg-bot/` (на Keenetic /etc часто read-only, поэтому установщик автоматически использует `/opt/etc/keenetic-tg-bot/`)
 - init‑скрипт: `/opt/etc/init.d/S99keenetic-tg-bot`
 - лог бота: `/opt/var/log/keenetic-tg-bot.log`
 - лог установки: `/opt/var/log/keenetic-tg-bot-install.log`
