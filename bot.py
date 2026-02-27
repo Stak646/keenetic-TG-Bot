@@ -26,6 +26,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Callable, Any
 
 import telebot
+from telebot import apihelper
+apihelper.CONNECT_TIMEOUT = 10
+apihelper.READ_TIMEOUT = 35
+
 from telebot.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
@@ -1517,10 +1521,15 @@ class Monitor(threading.Thread):
     def _notify_admins(self, text: str, reply_markup: InlineKeyboardMarkup | None = None) -> None:
         # text already formatted HTML
         for uid in self.cfg.admins:
-            try:
-                self.bot.send_message(uid, text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=reply_markup)
-            except Exception as e:
-                log_line(f"notify error to {uid}: {e}")
+            for attempt in range(2):
+                try:
+                    self.bot.send_message(uid, text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=reply_markup)
+                    break
+                except Exception as e:
+                    if attempt == 0:
+                        time.sleep(2)
+                        continue
+                    log_line(f"notify error to {uid}: {e}")
 
 
     def _check_services(self) -> None:
@@ -1561,16 +1570,10 @@ class Monitor(threading.Thread):
             if prev is None:
                 continue
             if prev and (not v) and self.cfg.notify_on_service_down and self._cooldown_ok(f"svc:{k}"):
-                restart_cb = None
-                logs_cb = None
-                if k == "nfqws":
-                    restart_cb = "nfqws:restart"
-                    logs_cb = "logs:nfqws"
-                elif k == "hydra":
-                    restart_cb = "hydra:restart"
-                    logs_cb = "logs:hrneo"
-                elif k == "awg":
-                    restart_cb = "awg:restart"
+                restart_map = {"nfqws": "nfqws:restart", "hydra": "hydra:restart", "awg": "awg:restart"}
+                logs_map = {"nfqws": "logs:nfqws", "hydra": "logs:hrneo", "awg": "logs:awg"}
+                restart_cb = restart_map.get(k)
+                logs_cb = logs_map.get(k)
                 self._notify_admins(
                     self._fmt_notice(
                         title=f"🚨 <b>Сервис остановлен</b>: <code>{k}</code>",
@@ -1706,24 +1709,19 @@ class Monitor(threading.Thread):
             (HR_NEO_LOG_DEFAULT, "hrneo"),
         ]
 
+        restart_map = {"bot": None, "nfqws2": "nfqws:restart", "hrneo": "hydra:restart"}
+        logs_map = {"bot": "logs:bot", "nfqws2": "logs:nfqws", "hrneo": "logs:hrneo"}
+
         for p, tag in checks:
             try:
                 hit = self._tail_new_errors(p, err_re)
                 if not hit:
                     continue
-
                 if not self._cooldown_ok(f"log:{tag}"):
                     continue
 
-                # always defined, even if code shifts
-                restart_cb = None
-                logs_cb = "logs:bot"
-                if tag == "nfqws2":
-                    restart_cb = "nfqws:restart"
-                    logs_cb = "logs:nfqws"
-                elif tag == "hrneo":
-                    restart_cb = "hydra:restart"
-                    logs_cb = "logs:hrneo"
+                restart_cb = restart_map.get(tag)
+                logs_cb = logs_map.get(tag, "logs:bot")
 
                 self._notify_admins(
                     self._fmt_notice(
@@ -1735,7 +1733,7 @@ class Monitor(threading.Thread):
                     reply_markup=kb_notice_actions(primary_cb="m:logs", restart_cb=restart_cb, logs_cb=logs_cb)
                 )
             except Exception as e:
-                log_line(f"check_logs error ({tag}): {e}")
+                log_line(f"check_logs error ({tag}): {repr(e)}")
 
 
 
@@ -1868,7 +1866,7 @@ opkg install nfqws-keenetic-web
 
                 self._check_logs()
             except Exception as e:
-                log_line(f"monitor loop error: {e}")
+                log_line(f"monitor loop error: {repr(e)}")
             self._stop.wait(self.cfg.monitor_interval_sec)
 
 
