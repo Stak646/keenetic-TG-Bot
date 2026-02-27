@@ -143,7 +143,18 @@ fetch_file() {
   [ -s "$dest" ] || { printf "download failed: %s\n" "$url" >&2; return 1; }
 }
 
-ensure_repo_filesensure_repo_files() {
+die() {
+  fail "$*"
+  cleanup
+  exit 1
+}
+
+cleanup_installer() {
+  [ -n "$SRC_DIR" ] || return 0
+  rm -rf "$SRC_DIR" >/dev/null 2>&1 || true
+}
+
+ensure_repo_files() {
   TMP="/opt/tmp/keenetic-tg-bot-installer"
   SRC_DIR="$TMP"
   rm -rf "$TMP" >/dev/null 2>&1 || true
@@ -190,7 +201,7 @@ is_exec() { [ -x "$1" ]; }
 
 installed_bot() {
   CFG_DIR="$(pick_cfg_dir)"
-  [ -f "$CFG_DIR/bot.py" ] && [ -x /opt/etc/init.d/S99keenetic-tg-bot ]
+  [ -x /opt/etc/init.d/S99keenetic-tg-bot ] && { [ -f "$CFG_DIR/Main.py" ] || [ -f "$CFG_DIR/bot.py" ]; }
 }
 installed_hydra() { has_cmd neo || has_cmd hr || is_exec /opt/bin/neo || is_exec /opt/bin/hr; }
 installed_nfqws2() { is_exec /opt/etc/init.d/S51nfqws2 || has_cmd nfqws2 || is_exec /opt/bin/nfqws2; }
@@ -277,7 +288,7 @@ install_bot() {
   cleanup_installer
 
   CFG_DIR="$(pick_cfg_dir)"
-  if [ "$RECONFIG" -eq 1 ] || [ ! -f "$CFG_DIR/config.json" ]; then
+  if [ "$RECONFIG" -eq 1 ] || { [ ! -f "$CFG_DIR/config/config.json" ] && [ ! -f "$CFG_DIR/config.json" ]; }; then
     prompt_token_admin
     write_config_json
     ok "$(t "Конфиг сохранён" "Config saved")"
@@ -375,13 +386,13 @@ pick_cfg_dir() {
 update_bot_files() {
   TMP="/opt/tmp/keenetic-tg-bot-weekly"
   mkdir -p "$TMP"
-  curl -fsSL "$(raw bot.py)" -o "$TMP/bot.py" || return 0
+  curl -fsSL "$(raw Main.py)" -o "$TMP/Main.py" || return 0
   curl -fsSL "$(raw S99keenetic-tg-bot)" -o "$TMP/S99keenetic-tg-bot" || return 0
 
   CFG="$(pick_cfg_dir)"
   mkdir -p "$CFG" /opt/etc/init.d
-  cp -f "$TMP/bot.py" "$CFG/bot.py"
-  chmod +x "$CFG/bot.py"
+  cp -f "$TMP/Main.py" "$CFG/Main.py"
+  chmod +x "$CFG/Main.py"
   cp -f "$TMP/S99keenetic-tg-bot" /opt/etc/init.d/S99keenetic-tg-bot
   chmod +x /opt/etc/init.d/S99keenetic-tg-bot
 }
@@ -477,9 +488,3 @@ fi
 ok "$(t "Готово." "Done.")"
 ok "$(t "Лог установки: /opt/var/log/keenetic-tg-bot-install.log" "Install log: /opt/var/log/keenetic-tg-bot-install.log")"
 cleanup
-
-
-cleanup_installer() {
-  [ -n "$SRC_DIR" ] || return 0
-  rm -rf "$SRC_DIR" >/dev/null 2>&1 || true
-}
