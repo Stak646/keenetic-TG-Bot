@@ -151,6 +151,8 @@ ensure_repo_filesensure_repo_files() {
   fetch_file "config.example.json" "$TMP/config.example.json"
   fetch_file "S99keenetic-tg-bot" "$TMP/S99keenetic-tg-bot"
   fetch_file "install.sh" "$TMP/install.sh"
+fetch_file "keenetic_tg_bot/__init__.py" "$TMP/keenetic_tg_bot/__init__.py"
+fetch_file "keenetic_tg_bot/diag.py" "$TMP/keenetic_tg_bot/diag.py"
   printf "%s\n" "$TMP"
 }
 

@@ -90,3 +90,14 @@ Polling is now wrapped with exponential backoff to recover from transient discon
 ### If you see Read timed out for api.telegram.org
 - Check connectivity from the router: `curl -vk --connect-timeout 10 --max-time 20 https://api.telegram.org/`
 - If you use policy routing/bypass tools (HydraRoute/NFQWS/AWG), try excluding `api.telegram.org` from tunnels or route it directly via WAN.
+
+
+## Diagnostics
+- Menu: **🛠 Diagnostics** (`/diag`)
+- Buttons:
+  - Telegram (api.telegram.org): DNS + route + curl
+  - DNS diagnostics
+  - Network quick
+  - Clear bot log
+
+> Diagnostics moved into `keenetic_tg_bot/diag.py` and imported lazily.

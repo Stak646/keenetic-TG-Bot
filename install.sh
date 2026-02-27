@@ -28,6 +28,12 @@ mkdir -p "$CFG_DIR" /opt/etc/init.d
 cp -f ./bot.py "$CFG_DIR/bot.py"
 chmod +x "$CFG_DIR/bot.py"
 
+# optional modules
+if [ -d ./keenetic_tg_bot ]; then
+  rm -rf "$CFG_DIR/keenetic_tg_bot" >/dev/null 2>&1 || true
+  cp -R ./keenetic_tg_bot "$CFG_DIR/keenetic_tg_bot"
+fi
+
 if [ ! -f "$CFG_DIR/config.json" ]; then
   cp -f ./config.example.json "$CFG_DIR/config.json"
   echo "Created $CFG_DIR/config.json"

@@ -1172,6 +1172,10 @@ def kb_main(snapshot: Dict[str, str], caps: Dict[str, bool]) -> InlineKeyboardMa
         InlineKeyboardButton("📝 Логи", callback_data="m:logs"),
     )
 
+    kb.row(
+        InlineKeyboardButton("🛠 Диагностика", callback_data="m:diag"),
+    )
+
     # Установка/сервис (если что-то отсутствует)
     if (not caps.get("hydra")) or (not caps.get("nfqws2")) or (not caps.get("awg")) or (not caps.get("cron")):
         kb.row(InlineKeyboardButton("🧩 Установка/Сервис", callback_data="m:install"))
@@ -1180,6 +1184,23 @@ def kb_main(snapshot: Dict[str, str], caps: Dict[str, bool]) -> InlineKeyboardMa
 
     return kb
 
+
+
+def kb_diag() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
+    kb.row(
+        InlineKeyboardButton("📡 Telegram (api.telegram.org)", callback_data="diag:tg"),
+        InlineKeyboardButton("🧾 DNS", callback_data="diag:dns"),
+    )
+    kb.row(
+        InlineKeyboardButton("🌐 Network quick", callback_data="diag:net"),
+        InlineKeyboardButton("🧹 Очистить лог бота", callback_data="diag:clearlog?confirm=1"),
+    )
+    kb.row(
+        InlineKeyboardButton("⬅️ Back", callback_data="m:main"),
+        InlineKeyboardButton("🏠 Home", callback_data="m:main"),
+    )
+    return kb
 
 
 def kb_router() -> InlineKeyboardMarkup:
@@ -2044,6 +2065,23 @@ class App:
             text = self.render_main()
             self.send_or_edit(m.chat.id, text, reply_markup=kb_main(self.snapshot(), self.capabilities()))
 
+        @self.bot.message_handler(commands=["diag"])
+        def _cmd_diag(m: Message) -> None:
+            if not self.is_chat_allowed(m.chat.id, m.from_user.id):
+                return self._deny(m.chat.id)
+            self.bot.send_message(m.chat.id, "🛠 <b>Диагностика</b>", reply_markup=kb_diag(), parse_mode="HTML")
+
+        @self.bot.message_handler(commands=["diag_tg"])
+        def _cmd_diag_tg(m: Message) -> None:
+            if not self.is_chat_allowed(m.chat.id, m.from_user.id):
+                return self._deny(m.chat.id)
+            from keenetic_tg_bot.diag import telegram_connectivity
+            self.bot.send_message(m.chat.id, "⏳ Проверяю Telegram…")
+            out = telegram_connectivity(self.sh)
+            self.bot.send_message(m.chat.id, f"📡 <b>Telegram connectivity</b>\n{fmt_code(out)}", parse_mode="HTML")
+
+
+
         @self.bot.message_handler(commands=["debug_on"])
         def _debug_on(m: Message) -> None:
             if m.from_user.id not in self.cfg.admins:
@@ -2227,6 +2265,9 @@ class App:
             if m == "logs":
                 self.send_or_edit(chat_id, "📝 <b>Логи</b>", reply_markup=kb_logs(), message_id=msg_id)
                 return
+            if m == "diag":
+                self.send_or_edit(chat_id, "🛠 <b>Диагностика</b>", reply_markup=kb_diag(), message_id=msg_id)
+                return
 
             if m == "install":
                 caps = self.capabilities()
@@ -2246,6 +2287,11 @@ class App:
                 )
                 self.send_or_edit(chat_id, txt, reply_markup=kb_home_back(), message_id=msg_id)
                 return
+
+        # Diagnostics actions
+        if data.startswith("diag:"):
+            self._handle_diag_cb(chat_id, msg_id, data)
+            return
 
         # Router actions
         if data.startswith("router:"):
@@ -2283,6 +2329,47 @@ class App:
             return
 
         self.send_or_edit(chat_id, "Неизвестная команда.", reply_markup=kb_main(self.snapshot(), self.capabilities()), message_id=msg_id)
+
+    def _handle_diag_cb(self, chat_id: int, msg_id: int, data: str) -> None:
+        # lazy import: keep core fast; only load when needed
+        from keenetic_tg_bot.diag import telegram_connectivity, dns_diagnostics, net_quick
+
+        if data == "diag:tg":
+            self.send_or_edit(chat_id, "⏳ Проверяю Telegram…", reply_markup=kb_diag(), message_id=msg_id)
+            out = telegram_connectivity(self.sh)
+            self.send_or_edit(chat_id, f"📡 <b>Telegram connectivity</b>\n{fmt_code(out)}", reply_markup=kb_diag(), message_id=msg_id)
+            return
+
+        if data == "diag:dns":
+            self.send_or_edit(chat_id, "⏳ Проверяю DNS…", reply_markup=kb_diag(), message_id=msg_id)
+            out = dns_diagnostics(self.sh)
+            self.send_or_edit(chat_id, f"🧾 <b>DNS diagnostics</b>\n{fmt_code(out)}", reply_markup=kb_diag(), message_id=msg_id)
+            return
+
+        if data == "diag:net":
+            self.send_or_edit(chat_id, "⏳ Собираю сеть…", reply_markup=kb_diag(), message_id=msg_id)
+            out = net_quick(self.sh)
+            self.send_or_edit(chat_id, f"🌐 <b>Network quick</b>\n{fmt_code(out)}", reply_markup=kb_diag(), message_id=msg_id)
+            return
+
+        if data.startswith("diag:clearlog?confirm=1"):
+            self.send_or_edit(chat_id, "🧹 Очистить лог бота?", reply_markup=kb_confirm("diag:clearlog!do", "m:diag"), message_id=msg_id)
+            return
+
+        if data == "diag:clearlog!do":
+            try:
+                Path(LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
+                with open(LOG_PATH, "w", encoding="utf-8") as f:
+                    f.write("")
+                self.send_or_edit(chat_id, "✅ Лог очищен: <code>/opt/var/log/keenetic-tg-bot.log</code>", reply_markup=kb_diag(), message_id=msg_id)
+            except Exception as e:
+                self.send_or_edit(chat_id, f"⚠️ Не удалось очистить лог: <code>{escape_html(str(e))}</code>", reply_markup=kb_diag(), message_id=msg_id)
+            return
+
+        self.send_or_edit(chat_id, "Неизвестная команда.", reply_markup=kb_diag(), message_id=msg_id)
+        return
+
+
 
     def _handle_router_cb(self, chat_id: int, msg_id: int, data: str) -> None:
         if data == "router:status":
@@ -2888,30 +2975,41 @@ class App:
         except Exception:
             pass
 
+        telebot.logger.setLevel(logging.INFO if self.cfg.debug_enabled else logging.CRITICAL)
         backoff = 5
-
+        err_streak = 0
+        last_notify = 0.0
 
         while True:
-
-
             try:
-
-
-                self.bot.infinity_polling(timeout=30, long_polling_timeout=30, interval=self.cfg.poll_interval_sec, skip_pending=True, allowed_updates=["message","callback_query"], logger_level=(logging.INFO if self.cfg.debug_enabled else logging.ERROR), non_stop=True)
-
-
+                self.bot.infinity_polling(
+                    timeout=60,
+                    long_polling_timeout=20,
+                    interval=self.cfg.poll_interval_sec,
+                    skip_pending=True,
+                    allowed_updates=["message", "callback_query"],
+                    logger_level=(logging.INFO if self.cfg.debug_enabled else logging.CRITICAL),
+                    non_stop=True,
+                )
                 backoff = 5
-
-
+                err_streak = 0
             except Exception as e:
-
-
+                err_streak += 1
                 log_line(f"polling error: {e}")
-
-
+                now = time.time()
+                # throttle: notify admins only after several consecutive errors, max once/hour
+                if err_streak >= 3 and (now - last_notify) >= 3600:
+                    last_notify = now
+                    for uid in self.cfg.admins:
+                        try:
+                            self.bot.send_message(
+                                uid,
+                                "⚠️ Telegram polling нестабилен (timeout/reset). Проверь маршрут до api.telegram.org: /diag → Telegram.",
+                                disable_web_page_preview=True,
+                            )
+                        except Exception:
+                            pass
                 time.sleep(backoff)
-
-
                 backoff = min(backoff * 2, 60)
 def main() -> None:
     cfg_path = os.getenv("BOT_CONFIG", DEFAULT_CONFIG_PATH)
