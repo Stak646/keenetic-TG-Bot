@@ -127,14 +127,23 @@ pick_cfg_dir() {
 raw_url() { echo "https://raw.githubusercontent.com/$REPO/$BRANCH/$1"; }
 
 fetch_file() {
-  f="$1"; dest="$2"
-  url="$(raw_url "$f")"
-  mkdir -p "$(dirname "$dest")"
-  [ "$DEBUG" -eq 1 ] && say "download: $url -> $dest" || true
-  curl -fsSL "$url" -o "$dest" >>"$LOGFILE" 2>&1
+  # fetch_file "path" "dest"
+  file="$1"; dest="$2"
+  url="$(raw_url "$file")?t=$(date +%s)"
+  mkdir -p "$(dirname "$dest")" >/dev/null 2>&1 || true
+  # Do NOT print to stdout (ensure_repo_files is captured)
+  if [ "$DEBUG" -eq 1 ]; then
+    printf "[debug] download: %s -> %s\n" "$url" "$dest" >&2 || true
+  fi
+  if has_cmd curl; then
+    curl -fsSL -H "Cache-Control: no-cache" -o "$dest" "$url" >>"$LOGFILE" 2>&1
+  else
+    wget -qO "$dest" "$url" >>"$LOGFILE" 2>&1
+  fi
+  [ -s "$dest" ] || { printf "download failed: %s\n" "$url" >&2; return 1; }
 }
 
-ensure_repo_files() {
+ensure_repo_filesensure_repo_files() {
   TMP="/opt/tmp/keenetic-tg-bot-installer"
   rm -rf "$TMP" >/dev/null 2>&1 || true
   mkdir -p "$TMP"
@@ -142,7 +151,7 @@ ensure_repo_files() {
   fetch_file "config.example.json" "$TMP/config.example.json"
   fetch_file "S99keenetic-tg-bot" "$TMP/S99keenetic-tg-bot"
   fetch_file "install.sh" "$TMP/install.sh"
-  echo "$TMP"
+  printf "%s\n" "$TMP"
 }
 
 cleanup() {
