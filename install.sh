@@ -35,10 +35,3 @@ chmod +x "$INIT_DIR/S99keenetic-tg-bot" || true
 
 echo "OK: installed into $BOT_DIR"
 echo "Init: $INIT_DIR/S99keenetic-tg-bot"
-
-
-# sanity: compile python files before service start
-if [ -x /opt/bin/python3 ]; then
-  /opt/bin/python3 -m py_compile "$BOT_DIR/Main.py" "$BOT_DIR/modules/"*.py "$BOT_DIR/modules/drivers/"*.py >/dev/null 2>&1 || {
-    echo "ERROR: python compile failed"; exit 1; }
-fi

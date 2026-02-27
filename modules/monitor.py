@@ -11,7 +11,10 @@ from telebot.types import InlineKeyboardMarkup
 from .constants import *
 from .utils import log_line, escape_html
 from .ui import kb_notice_actions, kb_confirm, kb_home_back, kb_install
-from .drivers import RouterDriver, HydraRouteDriver, NfqwsDriver, AwgDriver
+from .drivers.router import RouterDriver
+from .drivers.hydra import HydraRouteDriver
+from .drivers.nfqws import NfqwsDriver
+from .drivers.awg import AwgDriver
 
 class Monitor(threading.Thread):
     def __init__(
