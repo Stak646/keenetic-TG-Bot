@@ -24,7 +24,18 @@ class OpkgDriver(DriverBase):
         return OpkgResult(ok=ok, rc=res.rc, out=res.out, err=res.err, ms=res.ms)
 
     def update(self) -> OpkgResult:
-        return self._run("opkg update", timeout_sec=180)
+        res = self._run("opkg update", timeout_sec=180)
+        if res.ok:
+            return res
+        # BusyBox wget without SSL may fail on https feeds: "not an http or ftp url: https://..."
+        msg = (res.out + "\n" + res.err)
+        if "not an http or ftp url: https://" in msg or "wget returned 1" in msg:
+            # Try to install HTTPS-capable wget and retry
+            self._run("opkg remove wget-nossl", timeout_sec=120)
+            self._run("opkg install wget-ssl ca-certificates", timeout_sec=600)
+            res2 = self._run("opkg update", timeout_sec=180)
+            return res2
+        return res
 
     def upgrade(self) -> OpkgResult:
         return self._run("opkg upgrade", timeout_sec=600)

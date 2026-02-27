@@ -151,6 +151,49 @@ ensure_src_line() {
   echo "src/gz $name $url" >>"$dir/$fn" 2>/dev/null || true
 }
 
+
+opkg_update_with_https_fix() {
+  # Runs opkg update. If it fails due to wget lacking HTTPS support, installs wget-ssl and retries.
+  if [ "$DEBUG" -eq 1 ]; then
+    msg "==> opkg update"
+    /opt/bin/opkg update >>"$LOGFILE" 2>&1
+    rc=$?
+  else
+    run_step "opkg update" /opt/bin/opkg update
+    rc=$?
+  fi
+
+  [ "$rc" -eq 0 ] && return 0
+
+  # BusyBox wget without SSL prints: "wget: not an http or ftp url: https://..."
+  if grep -q "not an http or ftp url: https://" "$LOGFILE" 2>/dev/null; then
+    msg "Detected wget without HTTPS support. Installing wget-ssl + ca-certificates and retrying..."
+    # Sometimes wget-nossl conflicts with wget-ssl
+    if /opt/bin/opkg status wget-nossl 2>/dev/null | grep -q '^Status: install ok installed'; then
+      if [ "$DEBUG" -eq 1 ]; then
+        msg "==> opkg remove wget-nossl"
+        /opt/bin/opkg remove wget-nossl >>"$LOGFILE" 2>&1 || true
+      else
+        run_step "Removing wget-nossl" /opt/bin/opkg remove wget-nossl || true
+      fi
+    fi
+
+    if [ "$DEBUG" -eq 1 ]; then
+      msg "==> opkg install wget-ssl ca-certificates"
+      /opt/bin/opkg install wget-ssl ca-certificates >>"$LOGFILE" 2>&1 || true
+      msg "==> opkg update (retry)"
+      /opt/bin/opkg update >>"$LOGFILE" 2>&1
+      rc=$?
+    else
+      run_step "Installing wget-ssl" /opt/bin/opkg install wget-ssl ca-certificates || true
+      run_step "opkg update (retry)" /opt/bin/opkg update
+      rc=$?
+    fi
+  fi
+
+  return "$rc"
+}
+
 opkg_installed_ver() {
   pkg="$1"
   /opt/bin/opkg status "$pkg" 2>/dev/null | awk -F': ' '/^Version: /{print $2; exit}'
@@ -412,8 +455,8 @@ main() {
     ensure_src_line "keenetic_custom" "https://hoaxisr.github.io/entware-repo/$HOAXISR_ARCH" "hoaxisr-awg.conf"
   fi
 
-  # update lists
-  run_step "opkg update" /opt/bin/opkg update || die "opkg update failed"
+  # update lists (auto-fix HTTPS wget)
+  opkg_update_with_https_fix || die "opkg update failed"
   refresh_upgradable_cache
 
   # Required base deps
