@@ -6,18 +6,18 @@ A Telegram bot running **on the router** (Entware `/opt`) to manage: Router / Hy
 Interactive (RU/EN language selection at start):
 ```sh
 opkg update && opkg install ca-certificates curl && \
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh
 ```
 
 Non-interactive:
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | \
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | \
 sh -s -- --yes --bot --token 123456:ABCDEF --admin 599497434
 ```
 
 Verbose output:
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --debug
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --debug
 ```
 
 ## Get a bot token
@@ -67,7 +67,7 @@ Do not leak your bot token. If leaked, revoke it in BotFather (`/revoke`) and re
 
 ### Update an already installed bot (no module reinstall)
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --update-bot --yes
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes
 ```
 If you see **409 Conflict (getUpdates)**, multiple bot instances are running. Fix:
 ```sh
@@ -90,52 +90,3 @@ Polling is now wrapped with exponential backoff to recover from transient discon
 ### If you see Read timed out for api.telegram.org
 - Check connectivity from the router: `curl -vk --connect-timeout 10 --max-time 20 https://api.telegram.org/`
 - If you use policy routing/bypass tools (HydraRoute/NFQWS/AWG), try excluding `api.telegram.org` from tunnels or route it directly via WAN.
-
-
-## Diagnostics
-- Menu: **🛠 Diagnostics** (`/diag`)
-- Buttons:
-  - Telegram (api.telegram.org): DNS + route + curl
-  - DNS diagnostics
-  - Network quick
-  - Clear bot log
-
-> Diagnostics moved into `keenetic_tg_bot/diag.py` and imported lazily.
-
-
-
-## Modular structure
-Code is split into modules under `keenetic_tg_bot/`:
-- `app.py` — main bot and handlers
-- `drivers.py` — Router/HydraRoute/NFQWS2/AWG drivers
-- `monitor.py` — monitoring (services/logs/resources/updates)
-- `ui.py` — keyboards and navigation
-- `shell.py` + `profiler.py` — command runner + slow-command profiler
-- `diag.py` — network/Telegram diagnostics (lazy import)
-- `storage.py` — /opt status/top/cleanup
-
-### New features
-- **🛠 Diagnostics**: checks route and reachability to `api.telegram.org` (DNS/route/curl)
-- **🐢 Slow cmds**: top slow commands (debugging performance)
-- **💾 Storage**: /opt status, top directories and safe cleanup (logs/cache/opkg lists)
-
-
-### Branches
-- `alfa` — development / latest changes
-- `main` — stable (if/when merged)
-
-Install from `alfa`:
-```
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
-```
-
-
-## Files installed
-- Bot dir: `/opt/etc/keenetic-tg-bot/`
-  - `Main.py`
-  - `modules/` (drivers + other modules)
-  - `config/config.json`
-- Service: `/opt/etc/init.d/S99keenetic-tg-bot`
-
-
-> Note: This project was created with the help of AI.

@@ -1,12 +1,13 @@
 #!/bin/sh
+# Keenetic TG Bot init script (Entware)
+
 export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
-BOT_DIR="/opt/etc/keenetic-tg-bot"
-MAIN="$BOT_DIR/Main.py"
-LEGACY="$BOT_DIR/bot.py"
+CFG_DIR="/etc/keenetic-tg-bot"
+[ -f "$CFG_DIR/bot.py" ] || CFG_DIR="/opt/etc/keenetic-tg-bot"
 
-CONFIG1="$BOT_DIR/config/config.json"
-CONFIG2="$BOT_DIR/config.json"
+BOT="$CFG_DIR/bot.py"
+CONFIG="$CFG_DIR/config.json"
 
 PIDFILE="/opt/var/run/keenetic-tg-bot.pid"
 LOGFILE="/opt/var/log/keenetic-tg-bot.log"
@@ -14,36 +15,83 @@ LOGFILE="/opt/var/log/keenetic-tg-bot.log"
 PY="/opt/bin/python3"
 [ -x "$PY" ] || PY="$(command -v python3 2>/dev/null || echo python3)"
 
-export BOT_CONFIG="$CONFIG1"
-[ -f "$BOT_CONFIG" ] || export BOT_CONFIG="$CONFIG2"
+export BOT_CONFIG="$CONFIG"
 export PYTHONUNBUFFERED=1
 
+find_pids() {
+  ps w 2>/dev/null | grep -F "$BOT" | grep -v grep | awk '{print $1}'
+}
+
+pid_matches() {
+  pid="$1"
+  [ -n "$pid" ] || return 1
+  [ -r "/proc/$pid/cmdline" ] || return 1
+  tr '\0' ' ' < "/proc/$pid/cmdline" | grep -Fq "$BOT"
+}
+
 start() {
-  mkdir -p /opt/var/run /opt/var/log
-  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
-    echo "Already running"
+  LOCKDIR="/opt/var/run/keenetic-tg-bot.lock"
+  if ! mkdir "$LOCKDIR" 2>/dev/null; then
+    echo "Start locked (another action in progress)"
     return 0
   fi
+  trap 'rmdir "$LOCKDIR" >/dev/null 2>&1 || true' EXIT
 
-  if [ -f "$MAIN" ]; then
-    BOT="$MAIN"
-  else
-    BOT="$LEGACY"
-  fi
+  mkdir -p /opt/var/run /opt/var/log
 
   [ -f "$BOT" ] || { echo "Bot file not found: $BOT"; return 1; }
-  [ -f "$BOT_CONFIG" ] || { echo "Config not found: $BOT_CONFIG"; return 1; }
+  [ -f "$CONFIG" ] || { echo "Config not found: $CONFIG"; return 1; }
 
+  PIDS="$(find_pids)"
+  if [ -n "$PIDS" ]; then
+    set -- $PIDS
+    if [ "$#" -eq 1 ]; then
+      echo "$1" > "$PIDFILE"
+      echo "Already running (pid $1)"
+      return 0
+    fi
+    echo "Multiple instances detected: $PIDS — restarting cleanly"
+    for p in $PIDS; do kill "$p" 2>/dev/null || true; done
+    sleep 1
+    for p in $PIDS; do kill -9 "$p" 2>/dev/null || true; done
+    rm -f "$PIDFILE" 2>/dev/null || true
+  fi
+
+  if [ -f "$PIDFILE" ]; then
+    PID="$(cat "$PIDFILE" 2>/dev/null)"
+    if kill -0 "$PID" 2>/dev/null && pid_matches "$PID"; then
+      echo "Already running"
+      return 0
+    fi
+  fi
+
+  echo "Starting keenetic-tg-bot..."
   if command -v nohup >/dev/null 2>&1; then
     nohup "$PY" "$BOT" >> "$LOGFILE" 2>&1 &
+  elif command -v setsid >/dev/null 2>&1; then
+    setsid "$PY" "$BOT" >> "$LOGFILE" 2>&1 &
   else
     "$PY" "$BOT" >> "$LOGFILE" 2>&1 &
   fi
+
   echo $! > "$PIDFILE"
-  echo "Started PID $(cat "$PIDFILE")"
+  sleep 0.2
+  PID="$(cat "$PIDFILE" 2>/dev/null)"
+  if ! kill -0 "$PID" 2>/dev/null || ! pid_matches "$PID"; then
+    echo "Start failed (process exited). See log: $LOGFILE"
+    return 1
+  fi
+  echo "Started PID $PID"
 }
 
 stop() {
+  PIDS="$(find_pids)"
+  if [ -n "$PIDS" ]; then
+    for p in $PIDS; do kill "$p" 2>/dev/null || true; done
+    sleep 1
+    for p in $PIDS; do kill -9 "$p" 2>/dev/null || true; done
+  fi
+
   if [ -f "$PIDFILE" ]; then
     PID="$(cat "$PIDFILE" 2>/dev/null)"
     kill "$PID" 2>/dev/null || true
@@ -54,21 +102,27 @@ stop() {
   echo "Stopped"
 }
 
+status() {
+  if [ -f "$PIDFILE" ]; then
+    PID="$(cat "$PIDFILE" 2>/dev/null)"
+    if kill -0 "$PID" 2>/dev/null && pid_matches "$PID"; then
+      echo "RUNNING PID $PID"
+      return 0
+    fi
+  fi
+  echo "STOPPED"
+  return 3
+}
+
 restart() {
   stop
   start
 }
 
-status() {
-  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
-    echo "RUNNING PID $(cat "$PIDFILE")"
-    exit 0
-  fi
-  echo "STOPPED"
-  exit 3
-}
-
 case "$1" in
-  start|stop|restart|status) "$1" ;;
+  start) start ;;
+  stop) stop ;;
+  restart) restart ;;
+  status) status ;;
   *) echo "Usage: $0 {start|stop|restart|status}"; exit 2 ;;
 esac

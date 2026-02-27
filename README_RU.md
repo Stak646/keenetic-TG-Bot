@@ -6,18 +6,18 @@ Telegram-бот, который запускается **на роутере** (
 Интерактивно (в начале выбор языка RU/EN):
 ```sh
 opkg update && opkg install ca-certificates curl && \
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh
 ```
 
 Автоматически:
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | \
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | \
 sh -s -- --yes --bot --token 123456:ABCDEF --admin 599497434
 ```
 
 Полный вывод:
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --debug
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --debug
 ```
 
 ## Как получить bot_token
@@ -67,7 +67,7 @@ tail -n 200 /opt/var/log/keenetic-tg-bot.log
 
 ### Обновление уже установленного бота (без переустановки модулей)
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --update-bot --yes
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes
 ```
 Если видишь ошибку **409 Conflict (getUpdates)** — запущено несколько экземпляров. Исправь:
 ```sh
@@ -90,52 +90,3 @@ Polling is now wrapped with exponential backoff to recover from transient discon
 ### Если видишь Read timed out на api.telegram.org
 - Проверь доступ с роутера: `curl -vk --connect-timeout 10 --max-time 20 https://api.telegram.org/`
 - Если включены маршрутизации/обходы (HydraRoute/NFQWS/AWG), попробуй исключить `api.telegram.org` из туннелей или направить его напрямую через WAN.
-
-
-## Диагностика
-- Меню: **🛠 Диагностика** (`/diag`)
-- Кнопки:
-  - Telegram (api.telegram.org): DNS + route + curl
-  - DNS диагностика
-  - Network quick
-  - Очистка лога бота
-
-> Диагностика вынесена в отдельный модуль `keenetic_tg_bot/diag.py` и импортируется лениво.
-
-
-
-## Модульная структура
-Код разбит на модули в каталоге `keenetic_tg_bot/`:
-- `app.py` — основной бот и обработчики
-- `drivers.py` — драйверы Router/HydraRoute/NFQWS2/AWG
-- `monitor.py` — мониторинг (сервисы/логи/ресурсы/обновления)
-- `ui.py` — клавиатуры и навигация
-- `shell.py` + `profiler.py` — запуск команд + профилирование “долгих” команд
-- `diag.py` — диагностика сети/Telegram (лениво импортируется)
-- `storage.py` — /opt status/top/cleanup
-
-### Новые функции
-- **🛠 Диагностика**: проверка маршрута и доступа до `api.telegram.org` (DNS/route/curl)
-- **🐢 Slow cmds**: топ медленных команд (для отладки тормозов)
-- **💾 Storage**: статус /opt, топ каталогов и безопасная очистка (логи/кэш/списки opkg)
-
-
-### Branches
-- `alfa` — development / latest changes
-- `main` — stable (if/when merged)
-
-Install from `alfa`:
-```
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
-```
-
-
-## Files installed
-- Bot dir: `/opt/etc/keenetic-tg-bot/`
-  - `Main.py`
-  - `modules/` (drivers + other modules)
-  - `config/config.json`
-- Service: `/opt/etc/init.d/S99keenetic-tg-bot`
-
-
-> Примечание: проект сделан с помощью ИИ.

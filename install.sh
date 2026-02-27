@@ -1,37 +1,41 @@
 #!/bin/sh
 set -e
+export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
-# Install keenetic-tg-bot files into /opt/etc (Keenetic /etc is often read-only)
-BOT_DIR="/opt/etc/keenetic-tg-bot"
-INIT_DIR="/opt/etc/init.d"
+pick_cfg_dir() {
+  for d in /etc/keenetic-tg-bot /opt/etc/keenetic-tg-bot; do
+    mkdir -p "$d" >/dev/null 2>&1 || continue
+    tfile="$d/.rwtest.$$"
+    if ( : > "$tfile" ) 2>/dev/null; then
+      rm -f "$tfile" >/dev/null 2>&1 || true
+      echo "$d"
+      return 0
+    fi
+  done
+  mkdir -p /opt/etc/keenetic-tg-bot >/dev/null 2>&1 || true
+  echo "/opt/etc/keenetic-tg-bot"
+}
 
-SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+opkg update
+opkg install python3 python3-pip ca-certificates curl coreutils-nohup
 
-mkdir -p "$BOT_DIR" "$BOT_DIR/config" "$BOT_DIR/modules" "$INIT_DIR" /opt/var/log /opt/var/run
+python3 -m pip install --upgrade pip
+python3 -m pip install --no-cache-dir pyTelegramBotAPI
 
-# copy code
-cp -f "$SRC_DIR/Main.py" "$BOT_DIR/Main.py"
-chmod +x "$BOT_DIR/Main.py" || true
+CFG_DIR="$(pick_cfg_dir)"
+mkdir -p "$CFG_DIR" /opt/etc/init.d
 
-# modules package
-rm -rf "$BOT_DIR/modules" >/dev/null 2>&1 || true
-cp -a "$SRC_DIR/modules" "$BOT_DIR/"
+cp -f ./bot.py "$CFG_DIR/bot.py"
+chmod +x "$CFG_DIR/bot.py"
 
-# config example (do not overwrite real config)
-if [ -f "$SRC_DIR/config/config.example.json" ]; then
-  cp -f "$SRC_DIR/config/config.example.json" "$BOT_DIR/config/config.example.json"
-elif [ -f "$SRC_DIR/config.example.json" ]; then
-  cp -f "$SRC_DIR/config.example.json" "$BOT_DIR/config/config.example.json"
+if [ ! -f "$CFG_DIR/config.json" ]; then
+  cp -f ./config.example.json "$CFG_DIR/config.json"
+  echo "Created $CFG_DIR/config.json"
 fi
 
-# backward-compat link
-if [ -f "$BOT_DIR/config/config.json" ] && [ ! -f "$BOT_DIR/config.json" ]; then
-  ln -s "$BOT_DIR/config/config.json" "$BOT_DIR/config.json" 2>/dev/null || true
-fi
+cp -f ./S99keenetic-tg-bot /opt/etc/init.d/S99keenetic-tg-bot
+chmod +x /opt/etc/init.d/S99keenetic-tg-bot
 
-# init script
-cp -f "$SRC_DIR/S99keenetic-tg-bot" "$INIT_DIR/S99keenetic-tg-bot"
-chmod +x "$INIT_DIR/S99keenetic-tg-bot" || true
-
-echo "OK: installed into $BOT_DIR"
-echo "Init: $INIT_DIR/S99keenetic-tg-bot"
+/opt/etc/init.d/S99keenetic-tg-bot restart || true
+/opt/etc/init.d/S99keenetic-tg-bot status || true
+echo "Logs: /opt/var/log/keenetic-tg-bot.log"
