@@ -64,33 +64,20 @@ tail -n 200 /opt/var/log/keenetic-tg-bot.log
 Не публикуй токен. Если утёк — отзови у BotFather (`/revoke`) и запусти установку с `--bot --reconfig`.
 
 
-## Быстрая диагностика и Debug
-- Включить подробное логирование команд и времени выполнения:
-  - `/debug_on`
-  - `/debug_off`
-- Логи: `/opt/var/log/keenetic-tg-bot.log`
 
-> В Debug режиме бот пишет в лог все команды, rc и время выполнения. Это помогает ловить «долгие ответы».
-
-
-
-## Меню Router
-Добавлены саб-меню:
-- **Сеть**: `ip addr (brief)`, `ip route v4/v6` (группировка по dev, default отдельно)
-- **Firewall**: summary/raw для `iptables` (mangle/filter)
-- **DHCP клиенты**: LAN / Wi‑Fi / All + карточка каждого клиента (best‑effort разделение)
-
-
-
-## Анти-спам уведомлений
-Уведомление «мало места на /opt» теперь приходит **не чаще 1 раза в 6 часов** (настраивается в `config.json`):
-- `notify.disk_interval_sec`
-
-
-
-### Обновление файлов бота
-Если бот уже установлен и нужно обновить только файлы (bot.py/init):
-
+### Обновление уже установленного бота (без переустановки модулей)
 ```sh
 curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes
 ```
+Если видишь ошибку **409 Conflict (getUpdates)** — запущено несколько экземпляров. Исправь:
+```sh
+/opt/etc/init.d/S99keenetic-tg-bot stop
+ps w | grep -F /opt/etc/keenetic-tg-bot/bot.py | grep -v grep
+/opt/etc/init.d/S99keenetic-tg-bot start
+```
+
+
+### Debug
+- `/debug_on` — включить подробный лог команд и времени выполнения
+- `/debug_off` — выключить
+Лог: `/opt/var/log/keenetic-tg-bot.log`

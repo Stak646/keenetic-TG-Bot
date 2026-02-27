@@ -64,33 +64,20 @@ tail -n 200 /opt/var/log/keenetic-tg-bot.log
 Do not leak your bot token. If leaked, revoke it in BotFather (`/revoke`) and re-run installer with `--bot --reconfig`.
 
 
-## Debug & troubleshooting
-- Enable verbose command logging:
-  - `/debug_on`
-  - `/debug_off`
-- Logs: `/opt/var/log/keenetic-tg-bot.log`
 
-In Debug mode the bot logs each command, return code and execution time.
-
-
-
-## Router menus
-Sub-menus added:
-- **Network**: `ip addr (brief)`, `ip route v4/v6` (grouped by dev; default route separated)
-- **Firewall**: iptables summary/raw (mangle/filter)
-- **DHCP clients**: LAN / Wi‑Fi / All + per-client details (best-effort LAN/Wi‑Fi split)
-
-
-
-## Notification anti-spam
-Low disk space notifications for `/opt` are throttled (default: **once per 6 hours**), configurable in `config.json`:
-- `notify.disk_interval_sec`
-
-
-
-### Updating bot files
-If the bot is already installed and you want to refresh bot.py/init:
-
+### Update an already installed bot (no module reinstall)
 ```sh
 curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes
 ```
+If you see **409 Conflict (getUpdates)**, multiple bot instances are running. Fix:
+```sh
+/opt/etc/init.d/S99keenetic-tg-bot stop
+ps w | grep -F /opt/etc/keenetic-tg-bot/bot.py | grep -v grep
+/opt/etc/init.d/S99keenetic-tg-bot start
+```
+
+
+### Debug
+- `/debug_on` — enable verbose command + timing logs
+- `/debug_off` — disable
+Log: `/opt/var/log/keenetic-tg-bot.log`

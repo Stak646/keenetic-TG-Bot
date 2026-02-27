@@ -13,7 +13,6 @@ BRANCH="main"
 LANG_SEL=""
 DEBUG=0
 ASSUME_YES=0
-UPDATE_BOT=0
 
 WITH_BOT=0
 WITH_HYDRA=0
@@ -22,6 +21,7 @@ WITH_NFQWSWEB=0
 WITH_AWG=0
 WITH_CRON=0
 WITH_WEEKLY=0
+FORCE_UPDATE_BOT=0
 
 TG_TOKEN=""
 TG_ADMIN_ID=""
@@ -131,8 +131,7 @@ fetch_file() {
   url="$(raw_url "$f")"
   mkdir -p "$(dirname "$dest")"
   [ "$DEBUG" -eq 1 ] && say "download: $url -> $dest" || true
-  ts="$(date +%s)"
-  curl -fsSL -H "Cache-Control: no-cache" -H "Pragma: no-cache" "${url}?t=${ts}" -o "$dest" >>"$LOGFILE" 2>&1
+  curl -fsSL "$url" -o "$dest" >>"$LOGFILE" 2>&1
 }
 
 ensure_repo_files() {
@@ -242,6 +241,8 @@ install_bot() {
 
   runq "pip upgrade" python3 -m pip install --upgrade pip || true
   runq "pip pyTelegramBotAPI" python3 -m pip install --no-cache-dir pyTelegramBotAPI || { fail "pip pyTelegramBotAPI failed"; return 1; }
+
+  runq "bot stop" /opt/etc/init.d/S99keenetic-tg-bot stop || true
 
   SRC_DIR="$(ensure_repo_files)"
   deploy_bot_files "$SRC_DIR"
@@ -392,11 +393,11 @@ while [ $# -gt 0 ]; do
     --lang) shift; LANG_SEL="$1" ;;
     --debug|-debug) DEBUG=1 ;;
     --yes) ASSUME_YES=1 ;;
-    --update-bot|--update) UPDATE_BOT=1 ;;
     --token) shift; TG_TOKEN="$1" ;;
     --admin) shift; TG_ADMIN_ID="$1" ;;
     --reconfig) RECONFIG=1 ;;
     --bot) WITH_BOT=1 ;;
+    --update-bot|--update) WITH_BOT=1; FORCE_UPDATE_BOT=1 ;;
     --hydra) WITH_HYDRA=1 ;;
     --nfqws2) WITH_NFQWS2=1 ;;
     --nfqwsweb) WITH_NFQWSWEB=1 ;;
@@ -427,11 +428,7 @@ if [ "$FLAGS" = "0000000" ]; then
   installed_cron || { ask "$(t "Установить cron (для расписаний)?" "Install cron (for scheduling)?")" && WITH_CRON=1; }
   [ "$WITH_CRON" -eq 1 ] && { ask "$(t "Настроить автообновление (Чт 06:00)?" "Setup weekly update (Thu 06:00)?")" && WITH_WEEKLY=1; } || true
   if installed_bot; then
-    if [ "$UPDATE_BOT" -eq 1 ]; then
-      WITH_BOT=1
-    else
-      ask "$(t "Обновить файлы Telegram-бота?" "Update Telegram bot files?")" && WITH_BOT=1
-    fi
+    ask "$(t "Обновить файлы Telegram-бота?" "Update Telegram bot files?")" && { WITH_BOT=1; FORCE_UPDATE_BOT=1; }
   else
     ask "$(t "Установить Telegram-бот?" "Install Telegram bot?")" && WITH_BOT=1
   fi

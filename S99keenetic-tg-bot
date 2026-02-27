@@ -18,6 +18,10 @@ PY="/opt/bin/python3"
 export BOT_CONFIG="$CONFIG"
 export PYTHONUNBUFFERED=1
 
+find_pids() {
+  ps w 2>/dev/null | grep -F "$BOT" | grep -v grep | awk '{print $1}'
+}
+
 pid_matches() {
   pid="$1"
   [ -n "$pid" ] || return 1
@@ -26,10 +30,32 @@ pid_matches() {
 }
 
 start() {
+  LOCKDIR="/opt/var/run/keenetic-tg-bot.lock"
+  if ! mkdir "$LOCKDIR" 2>/dev/null; then
+    echo "Start locked (another action in progress)"
+    return 0
+  fi
+  trap 'rmdir "$LOCKDIR" >/dev/null 2>&1 || true' EXIT
+
   mkdir -p /opt/var/run /opt/var/log
 
   [ -f "$BOT" ] || { echo "Bot file not found: $BOT"; return 1; }
   [ -f "$CONFIG" ] || { echo "Config not found: $CONFIG"; return 1; }
+
+  PIDS="$(find_pids)"
+  if [ -n "$PIDS" ]; then
+    set -- $PIDS
+    if [ "$#" -eq 1 ]; then
+      echo "$1" > "$PIDFILE"
+      echo "Already running (pid $1)"
+      return 0
+    fi
+    echo "Multiple instances detected: $PIDS — restarting cleanly"
+    for p in $PIDS; do kill "$p" 2>/dev/null || true; done
+    sleep 1
+    for p in $PIDS; do kill -9 "$p" 2>/dev/null || true; done
+    rm -f "$PIDFILE" 2>/dev/null || true
+  fi
 
   if [ -f "$PIDFILE" ]; then
     PID="$(cat "$PIDFILE" 2>/dev/null)"
@@ -59,6 +85,13 @@ start() {
 }
 
 stop() {
+  PIDS="$(find_pids)"
+  if [ -n "$PIDS" ]; then
+    for p in $PIDS; do kill "$p" 2>/dev/null || true; done
+    sleep 1
+    for p in $PIDS; do kill -9 "$p" 2>/dev/null || true; done
+  fi
+
   if [ -f "$PIDFILE" ]; then
     PID="$(cat "$PIDFILE" 2>/dev/null)"
     kill "$PID" 2>/dev/null || true
