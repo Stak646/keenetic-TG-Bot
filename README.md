@@ -88,16 +88,9 @@ Low disk space notifications for `/opt` are throttled (default: **once per 6 hou
 
 
 
-## Updating
-
-To **update bot files** (overwrite `bot.py` and init script), run:
+### Updating bot files
+If the bot is already installed and you want to refresh bot.py/init:
 
 ```sh
 curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes
-```
-
-To re-enter `bot_token` and `admin id`:
-
-```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes --reconfig
 ```

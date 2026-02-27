@@ -88,16 +88,9 @@ tail -n 200 /opt/var/log/keenetic-tg-bot.log
 
 
 
-## Обновление
-
-Чтобы **обновить файлы бота** (перезаписать `bot.py` и init-скрипт), запусти:
+### Обновление файлов бота
+Если бот уже установлен и нужно обновить только файлы (bot.py/init):
 
 ```sh
 curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes
-```
-
-Если нужно заново ввести `bot_token` и `admin id`:
-
-```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes --reconfig
 ```
