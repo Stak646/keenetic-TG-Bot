@@ -42,6 +42,20 @@ Telegram bot for Keenetic routers (Entware). Modular UI, component manager, and 
 
 ### One-liner (alfa)
 
+Interactive install (no parameters):
+
+```sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
+```
+
+Installer debug mode:
+
+```sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --debug
+```
+
+Non-interactive (for scripts):
+
 ```sh
 curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --yes --lang ru --token "YOUR_BOT_TOKEN" --admin 123456789
 ```
@@ -78,6 +92,7 @@ Key fields:
 
 - `/opt/var/log/keenetic-tg-bot.log` (rotating, main log)
 - `/opt/var/log/keenetic-tg-bot-console.log` (stdout/stderr from daemon)
+- `/opt/var/log/keenetic-tg-bot-install.log` (installer log)
 
 ## Troubleshooting
 
