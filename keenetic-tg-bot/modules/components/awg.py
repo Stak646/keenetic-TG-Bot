@@ -135,7 +135,11 @@ class AwgComponent(ComponentBase):
             # restart service by init script if exists
             return app.run_long_job(
                 "AWG restart",
-                job=lambda: app.sh.run("sh /opt/etc/init.d/S80awg-manager restart 2>/dev/null || true", timeout_sec=30, cache_ttl_sec=0),
+                job=lambda: app.sh.run(
+                    "sh $(ls /opt/etc/init.d/S??awg-manager 2>/dev/null | head -n1) restart 2>/dev/null || true",
+                    timeout_sec=30,
+                    cache_ttl_sec=0,
+                ),
                 back="aw|m",
             )
 

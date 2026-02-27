@@ -36,10 +36,10 @@ class NfqwsDriver(DriverBase):
         # mode detection is best-effort
     def is_installed(self) -> bool:
         # Prefer official package name, but keep a fallback for older forks.
-        ok = self.sh.run("opkg status nfqws2-keenetic >/dev/null 2>&1 && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes"
+        ok = self.opkg_installed("nfqws2-keenetic", cache_ttl_sec=10)
         if ok:
             return True
-        ok2 = self.sh.run("opkg status nfqws2 >/dev/null 2>&1 && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes"
+        ok2 = self.opkg_installed("nfqws2", cache_ttl_sec=10)
         return ok2 or self.core_svc.status().installed
 
     def detect_mode(self) -> str:

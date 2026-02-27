@@ -19,7 +19,7 @@ class MagiTrickleDriver(DriverBase):
         self.svc = InitServiceDriver(sh, script_name_patterns=[r"magitrickle"], pkg_names=["magitrickle"])
 
     def is_installed(self) -> bool:
-        ok = self.sh.run("opkg status magitrickle >/dev/null 2>&1 && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes"
+        ok = self.opkg_installed("magitrickle", cache_ttl_sec=10)
         return ok or self.svc.status().installed
 
     def overview(self, default_port: int = 0) -> MagiInfo:

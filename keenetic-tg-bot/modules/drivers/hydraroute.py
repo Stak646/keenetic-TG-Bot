@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -40,22 +39,25 @@ class HydraRouteDriver(DriverBase):
     # --- detection helpers
 
     def _neo_installed(self) -> bool:
-        if self.sh.run("opkg status hrneo >/dev/null 2>&1 && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes":
+        if self.opkg_installed("hrneo", cache_ttl_sec=10):
             return True
         return self.neo_svc.status().installed
 
     def _classic_installed(self) -> bool:
-        if self.sh.run("opkg status hydraroute >/dev/null 2>&1 && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes":
+        if self.opkg_installed("hydraroute", cache_ttl_sec=10):
             return True
         return self.classic_svc.status().installed
 
     def _relic_installed(self) -> bool:
-        # Relic doesn't always ship an opkg package; detect by characteristic files.
-        # Upstream Relic docs mention /opt/etc/AdGuardHome/ipset.conf
-        if os.path.isfile("/opt/etc/AdGuardHome/ipset.conf"):
-            return True
-        # Also accept a legacy init script name if present
-        res = self.sh.run("ls /opt/etc/init.d 2>/dev/null | grep -Eqi 'hydraroute.*relic|relic.*hydraroute' && echo yes || echo no", timeout_sec=5, cache_ttl_sec=30)
+        # Relic doesn't always ship an opkg package; detect by *specific* markers.
+        # IMPORTANT: /opt/etc/AdGuardHome/ipset.conf is NOT a reliable marker on its own,
+        # because many non-Hydra setups use it (manual ipset routing with AGH).
+        res = self.sh.run(
+            "ls /opt/etc/init.d 2>/dev/null | "
+            "grep -Eqi '(hydraroute.*relic|relic.*hydraroute|hrpanel|hpanel)' && echo yes || echo no",
+            timeout_sec=5,
+            cache_ttl_sec=30,
+        )
         return res.out.strip() == "yes"
 
     def variant(self) -> str:

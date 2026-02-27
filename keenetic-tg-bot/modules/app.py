@@ -65,6 +65,13 @@ class App:
         # Telegram API helper timeouts (avoid hanging requests)
         telebot.apihelper.CONNECT_TIMEOUT = 5
         telebot.apihelper.READ_TIMEOUT = 20
+        # Some pyTelegramBotAPI versions use REQUEST_TIMEOUT for non-polling calls
+        # (sendMessage/editMessage/etc). Keep it in sync when available.
+        if hasattr(telebot.apihelper, "REQUEST_TIMEOUT"):
+            try:
+                telebot.apihelper.REQUEST_TIMEOUT = 20
+            except Exception:
+                pass
 
         self.bot = telebot.TeleBot(
             cfg.bot_token,
@@ -165,23 +172,36 @@ class App:
         return Screen(text=f"{i18n.t('home.header')}\n\n{i18n.t('home.subtitle')}", kb=kb(rows))
 
     def send_screen(self, chat_id: int, screen: Screen) -> None:
-        try:
-            self.bot.send_message(chat_id, screen.text, reply_markup=screen.kb, disable_web_page_preview=screen.disable_preview)
-        except Exception as e:
-            self.log.error("send_screen error: %s", e)
+        last_err = None
+        for attempt in range(3):
+            try:
+                self.bot.send_message(chat_id, screen.text, reply_markup=screen.kb, disable_web_page_preview=screen.disable_preview)
+                return
+            except Exception as e:
+                last_err = e
+                # short backoff; helps with transient TLS resets/timeouts
+                time.sleep(0.6 * (attempt + 1))
+        self.log.error("send_screen error: %s", last_err)
 
     def edit_or_send(self, chat_id: int, message_id: int, screen: Screen) -> None:
-        try:
-            self.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=screen.text,
-                reply_markup=screen.kb,
-                disable_web_page_preview=screen.disable_preview,
-            )
-        except Exception:
-            # fallback: send new
-            self.send_screen(chat_id, screen)
+        last_err = None
+        for attempt in range(2):
+            try:
+                self.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=screen.text,
+                    reply_markup=screen.kb,
+                    disable_web_page_preview=screen.disable_preview,
+                )
+                return
+            except Exception as e:
+                last_err = e
+                time.sleep(0.4 * (attempt + 1))
+        # fallback: send new
+        if last_err and self.cfg.debug:
+            self.log.error("edit_message_text failed, fallback to send: %s", last_err)
+        self.send_screen(chat_id, screen)
 
     def notify_admins(self, html_text: str) -> None:
         for admin_id in self.cfg.admins or []:

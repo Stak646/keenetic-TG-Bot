@@ -97,11 +97,13 @@ class ComponentsManagerComponent(ComponentBase):
         nfqws_inst = self.nfqws.is_installed()
         nfqws_run = self.nfqws.overview(app.cfg.nfqws_web_port).core.running if nfqws_inst else False
         awg_inst = self.awg.detect()
+        # "running" means API is reachable (more accurate than "init script exists")
         awg_run = False
         if awg_inst:
-            # best-effort: check init script
-            s = app.sh.run("ls /opt/etc/init.d 2>/dev/null | grep -qi awg && echo yes || echo no", timeout_sec=5, cache_ttl_sec=30).out.strip()
-            awg_run = (s == "yes")
+            try:
+                awg_run = bool(self.awg.version().ok)
+            except Exception:
+                awg_run = False
 
         lines = [
             i18n.t("comp.subtitle"),
