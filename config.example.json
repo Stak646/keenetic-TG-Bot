@@ -19,6 +19,12 @@
     "service_down": true,
     "internet_down": true,
     "log_errors": true,
-    "cooldown_sec": 300
+    "cooldown_sec": 300,
+    "disk_interval_sec": 21600,
+    "load_interval_sec": 1800
+  },
+  "debug": {
+    "enabled": false,
+    "log_output_max": 5000
   }
 }

@@ -5,7 +5,7 @@ Keenetic Telegram Router Bot
 - Управление роутером (Keenetic/Entware) и OPKG приложениями:
   HydraRoute (Neo/Classic), NFQWS2(+web), AWG Manager.
 - Меню на inline-кнопках с навигацией (Home/Back), редактирование одного сообщения.
-- Мониторинг: падения сервисов, ошибки в логах, доступные обновления opkg, интернет/ресурсы.
+- Мониторинг: падения сервисов, ошибки в логах, доступные обновления opkg, интернет/ресурсы. 
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from telebot.types import (
 # -----------------------------
 # Константы / Пути
 # -----------------------------
-DEFAULT_CONFIG_PATH = "/etc/keenetic-tg-bot/config.json"
+DEFAULT_CONFIG_PATH = "/opt/etc/keenetic-tg-bot/config.json"
 LOG_PATH = "/opt/var/log/keenetic-tg-bot.log"
 
 # HydraRoute Neo paths (из документации)
@@ -96,6 +96,89 @@ def escape_html(s: str) -> str:
         .replace(">", "&gt;")
     )
 
+ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+def strip_ansi(s: str) -> str:
+    return ANSI_RE.sub("", s or "")
+
+def clip_text(s: str, max_lines: int = 120, max_chars: int = 3500) -> str:
+    s = s or ""
+    lines = s.splitlines()
+    if len(lines) > max_lines:
+        lines = lines[:max_lines] + ["… (truncated)"]
+    out = "\n".join(lines)
+    if len(out) > max_chars:
+        out = out[:max_chars] + "\n… (truncated)"
+    return out
+
+def fmt_code(s: str) -> str:
+    return f"<pre><code>{escape_html(clip_text(s))}</code></pre>"
+
+def fmt_ip_route(out: str) -> str:
+    out = (out or "").strip()
+    if not out:
+        return out
+    lines = out.splitlines()
+    default = [ln for ln in lines if ln.startswith("default ")]
+    rest = [ln for ln in lines if ln not in default]
+    groups: Dict[str, List[str]] = {}
+    for ln in rest:
+        m = re.search(r"\bdev\s+(\S+)", ln)
+        dev = m.group(1) if m else "other"
+        groups.setdefault(dev, []).append(ln)
+    res: List[str] = []
+    if default:
+        res += ["# default"] + default + [""]
+    for dev in sorted(groups.keys()):
+        res += [f"# dev {dev}"] + groups[dev] + [""]
+    return "\n".join([x for x in res if x != ""])
+
+def summarize_iptables(out: str) -> str:
+    chains: Dict[str, Dict[str, Any]] = {}
+    rules = 0
+    for ln in (out or "").splitlines():
+        ln = ln.strip()
+        if ln.startswith("-P "):
+            parts = ln.split()
+            if len(parts) >= 3:
+                chains.setdefault(parts[1], {"policy": parts[2], "rules": 0})
+        elif ln.startswith("-A "):
+            rules += 1
+            parts = ln.split()
+            if len(parts) >= 2:
+                chains.setdefault(parts[1], {"policy": "?", "rules": 0})
+                chains[parts[1]]["rules"] += 1
+    lines = [f"Total rules: {rules}"]
+    for ch in sorted(chains.keys()):
+        lines.append(f"{ch:14} rules={chains[ch]['rules']} policy={chains[ch]['policy']}")
+    return "\n".join(lines)
+
+DHCP_RE = re.compile(r"(?P<ip>\d+\.\d+\.\d+\.\d+)\s+(?P<mac>(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})\s*(?P<rest>.*)")
+
+def parse_dhcp_bindings(raw: str) -> List[Dict[str, str]]:
+    clients: List[Dict[str, str]] = []
+    for ln in (raw or "").splitlines():
+        m = DHCP_RE.search(ln)
+        if not m:
+            continue
+        ip = m.group("ip")
+        mac = m.group("mac").lower()
+        rest = (m.group("rest") or "").strip()
+        name = rest.split()[0] if rest else ""
+        clients.append({"ip": ip, "mac": mac, "name": name, "rest": rest})
+    return clients
+
+def split_clients_lan_wifi(clients: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    lan: List[Dict[str, str]] = []
+    wifi: List[Dict[str, str]] = []
+    for c in clients:
+        tag = (c.get("iface", "") + " " + c.get("rest", "")).lower()
+        if any(k in tag for k in ["wlan", "wifi", "wl", "ssid", "hostap", "ap"]):
+            wifi.append(c)
+        else:
+            lan.append(c)
+    return lan, wifi
+
 
 def chunk_text(text: str, limit: int = 3800) -> List[str]:
     """Telegram limit 4096. Для запаса держим 3800."""
@@ -141,10 +224,14 @@ class BotConfig:
     notify_on_internet_down: bool = True
     notify_on_log_errors: bool = True
 
-    # ограничение спама
+    # анти-спам
     notify_cooldown_sec: int = 300
+    notify_disk_interval_sec: int = 6 * 3600
+    notify_load_interval_sec: int = 30 * 60
 
-
+    # debug
+    debug_enabled: bool = False
+    debug_log_output_max: int = 5000
 def load_config(path: str) -> BotConfig:
     with open(path, "r", encoding="utf-8") as f:
         raw = json.load(f)
@@ -165,18 +252,26 @@ def load_config(path: str) -> BotConfig:
         notify_on_internet_down=bool(raw.get("notify", {}).get("internet_down", True)),
         notify_on_log_errors=bool(raw.get("notify", {}).get("log_errors", True)),
         notify_cooldown_sec=int(raw.get("notify", {}).get("cooldown_sec", 300)),
+        notify_disk_interval_sec=int(raw.get("notify", {}).get("disk_interval_sec", 6*3600)),
+        notify_load_interval_sec=int(raw.get("notify", {}).get("load_interval_sec", 30*60)),
+        debug_enabled=bool(raw.get("debug", {}).get("enabled", False)),
+        debug_log_output_max=int(raw.get("debug", {}).get("log_output_max", 5000)),
     )
 
 
 class Shell:
-    def __init__(self, timeout_sec: int = 30):
+    def __init__(self, timeout_sec: int = 30, debug: bool = False, debug_output_max: int = 5000):
         self.timeout_sec = timeout_sec
+        self.debug = debug
+        self.debug_output_max = debug_output_max
         self.env = os.environ.copy()
         # entware binaries
         self.env["PATH"] = "/opt/bin:/opt/sbin:/usr/bin:/usr/sbin:/bin:/sbin:" + self.env.get("PATH", "")
 
     def run(self, args: List[str], timeout_sec: Optional[int] = None) -> Tuple[int, str]:
         timeout = timeout_sec if timeout_sec is not None else self.timeout_sec
+        t0 = time.time()
+        cmd = " ".join(args)
         try:
             proc = subprocess.run(
                 args,
@@ -186,14 +281,31 @@ class Shell:
                 env=self.env,
                 timeout=timeout,
             )
-            out = (proc.stdout or "").strip()
-            return proc.returncode, out
+            out = strip_ansi((proc.stdout or "")).strip()
+            rc = proc.returncode
+            dt = time.time() - t0
+            if self.debug:
+                log_line(f"DEBUG cmd={cmd} rc={rc} dt={dt:.3f}s")
+                if out:
+                    log_line("DEBUG out:\n" + out[: self.debug_output_max])
+            return rc, out
         except subprocess.TimeoutExpired as e:
-            out = (e.stdout or "").strip() if e.stdout else ""
+            out = strip_ansi((e.stdout or "")).strip() if e.stdout else ""
+            dt = time.time() - t0
+            if self.debug:
+                log_line(f"DEBUG cmd={cmd} rc=124 dt={dt:.3f}s")
+                if out:
+                    log_line("DEBUG out:\n" + out[: self.debug_output_max])
             return 124, f"TIMEOUT {timeout}s\n{out}"
         except FileNotFoundError:
+            dt = time.time() - t0
+            if self.debug:
+                log_line(f"DEBUG cmd={cmd} rc=127 dt={dt:.3f}s")
             return 127, f"Команда не найдена: {args[0]}"
         except Exception as e:
+            dt = time.time() - t0
+            if self.debug:
+                log_line(f"DEBUG cmd={cmd} rc=1 dt={dt:.3f}s")
             return 1, f"Ошибка запуска: {e}"
 
     def sh(self, cmdline: str, timeout_sec: Optional[int] = None) -> Tuple[int, str]:
@@ -308,6 +420,59 @@ class RouterDriver:
             return int(total), int(avail)
         except Exception:
             return 0, 0
+
+    def opt_storage_info(self) -> Tuple[bool, str]:
+        """
+        Best-effort: returns (is_usb, source_string) for /opt mount.
+        """
+        rc, out = self.sh.sh("mount | grep ' on /opt ' | head -n 1", timeout_sec=5)
+        src = out.split(" on /opt ")[0].strip() if out else ""
+        if not src:
+            rc, out = self.sh.sh("df -h /opt | tail -n 1", timeout_sec=5)
+            src = out.split()[0] if out else "unknown"
+        s = (src or "").lower()
+        is_usb = any(k in s for k in ["/dev/sd", "usb", "uuid=", "/dev/usb"])
+        return is_usb, (src or "unknown")
+
+    def arp_iface_map(self) -> Dict[str, str]:
+        """
+        Try to map MAC->interface via ndmc 'show ip arp' (best-effort).
+        """
+        mp: Dict[str, str] = {}
+        if not which("ndmc"):
+            return mp
+        rc, out = self.sh.run(["ndmc", "-c", "show", "ip", "arp"], timeout_sec=10)
+        if rc != 0 or not out:
+            return mp
+        for ln in out.splitlines():
+            # try to find MAC and iface tokens
+            mm = re.search(r"((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})", ln)
+            if not mm:
+                continue
+            mac = mm.group(1).lower()
+            mi = re.search(r"\b(dev|iface|interface)\b\s*(\S+)", ln, flags=re.I)
+            iface = ""
+            if mi:
+                iface = mi.group(2)
+            else:
+                # heuristic: last token sometimes is iface
+                toks = ln.split()
+                if toks:
+                    iface = toks[-1]
+            mp[mac] = iface
+        return mp
+
+    def dhcp_clients_enriched(self, limit: int = 200) -> List[Dict[str, str]]:
+        raw = self.show_dhcp_clients(limit=limit)
+        clients = parse_dhcp_bindings(raw)
+        amap = self.arp_iface_map()
+        for c in clients:
+            mac = c.get("mac", "").lower()
+            if mac in amap:
+                c["iface"] = amap[mac]
+            else:
+                c["iface"] = ""
+        return clients
 
     def internet_check(self) -> Tuple[bool, str]:
         # ping IP + DNS (если есть nslookup/getent)
@@ -467,8 +632,8 @@ class HydraRouteDriver:
         if self.is_neo_available():
             rc, out = self.neo_cmd("status")
             parts.append(f"• Neo: {'✅ RUNNING' if rc == 0 else '⛔ STOPPED'}")
-            if out:
-                parts.append(f"<code>{escape_html(out[:900])}</code>")
+            if out and self.sh.debug:
+                parts.append(fmt_code(out[:900]))
             if ("hrweb" in self.opkg.target_versions()) or Path("/opt/share/hrweb").exists() or Path("/opt/etc/init.d/S50hrweb").exists():
                 parts.append(f"• HRweb: <code>http://{self.router.lan_ip()}:2000</code>")
             else:
@@ -476,8 +641,8 @@ class HydraRouteDriver:
         elif self.is_classic_available():
             rc, out = self.classic_cmd("status")
             parts.append(f"• Classic: {'✅ RUNNING' if rc == 0 else '⛔ STOPPED'}")
-            if out:
-                parts.append(f"<code>{escape_html(out[:900])}</code>")
+            if out and self.sh.debug:
+                parts.append(fmt_code(out[:900]))
         else:
             parts.append("Не найдено (нет neo/hr).")
         # Версии пакетов
@@ -730,6 +895,23 @@ class NfqwsDriver:
         # fallback: try service
         return 127, "init-скрипт nfqws2 не найден"
 
+    def detect_mode(self) -> str:
+        # 1) config
+        if NFQWS_CONF.exists():
+            ok, txt = self.sh.read_file(NFQWS_CONF, max_bytes=60_000)
+            if ok:
+                kv = parse_env_like(txt)
+                for k in ("MODE", "NFQWS_MODE", "mode"):
+                    if kv.get(k):
+                        return str(kv.get(k))
+        # 2) process args
+        rc, out = self.sh.sh("ps w | grep -E 'nfqws2' | grep -v grep | head -n 1", timeout_sec=5)
+        if out:
+            m = re.search(r"(?:--mode|-m)\s+(\S+)", out)
+            if m:
+                return m.group(1)
+        return "?"
+
     def status_text(self) -> str:
         parts = ["🧷 <b>NFQWS2</b>"]
         if not self.installed():
@@ -737,8 +919,8 @@ class NfqwsDriver:
             return "\n".join(parts)
         rc, out = self.init_action("status")
         parts.append(f"• Service: {'✅ RUNNING' if rc == 0 else '⛔ STOPPED'}")
-        if out:
-            parts.append(f"<code>{escape_html(out[:900])}</code>")
+        if out and self.sh.debug:
+                parts.append(fmt_code(out[:900]))
 
         # конфиг summary
         if NFQWS_CONF.exists():
@@ -748,7 +930,7 @@ class NfqwsDriver:
                 kv = parse_env_like(txt)
                 iface = kv.get("ISP_INTERFACE") or kv.get("ISP_IFACE") or kv.get("IFACE") or "?"
                 ipv6 = kv.get("IPV6_ENABLED") or kv.get("IPV6") or "?"
-                mode = kv.get("MODE") or kv.get("NFQWS_MODE") or "?"
+                mode = self.detect_mode()
                 parts.append(f"• iface: <code>{escape_html(str(iface))}</code>  ipv6: <code>{escape_html(str(ipv6))}</code>  mode: <code>{escape_html(str(mode))}</code>")
 
         parts.append(f"• Logs: <code>{NFQWS_LOG}</code>")
@@ -997,8 +1179,8 @@ class AwgDriver:
             return "\n".join(parts)
         rc, out = self.init_action("status")
         parts.append(f"• Service: {'✅ RUNNING' if rc == 0 else '⛔ STOPPED'}")
-        if out:
-            parts.append(f"<code>{escape_html(out[:900])}</code>")
+        if out and self.sh.debug:
+                parts.append(fmt_code(out[:900]))
         if NFQWS_WEB_CONF.exists() or Path("/opt/share/nfqws-web").exists() or ("nfqws-keenetic-web" in self.opkg.target_versions()):
             parts.append(f"• WebUI: <code>{self.web_url()}</code>")
         else:
@@ -1109,21 +1291,64 @@ def kb_router() -> InlineKeyboardMarkup:
         InlineKeyboardButton("🌐 Интернет тест", callback_data="router:net"),
     )
     kb.row(
-        InlineKeyboardButton("👥 DHCP клиенты", callback_data="router:dhcp"),
+        InlineKeyboardButton("👥 DHCP клиенты", callback_data="router:dhcpmenu"),
+        InlineKeyboardButton("🌐 Сеть", callback_data="router:netmenu"),
+    )
+    kb.row(
+        InlineKeyboardButton("🧱 Firewall", callback_data="router:fwmenu"),
         InlineKeyboardButton("📤 Export config", callback_data="router:exportcfg"),
     )
     kb.row(
-        InlineKeyboardButton("📡 ip addr", callback_data="router:ipaddr"),
-        InlineKeyboardButton("🧭 ip route", callback_data="router:iproute"),
-    )
-    kb.row(
-        InlineKeyboardButton("🧱 iptables(mangle)", callback_data="router:iptables"),
         InlineKeyboardButton("🔄 Reboot", callback_data="router:reboot?confirm=1"),
-    )
-    kb.row(
         InlineKeyboardButton("🏠 Home", callback_data="m:main"),
     )
     return kb
+
+
+def kb_router_net() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
+    kb.row(
+        InlineKeyboardButton("📡 ip addr (brief)", callback_data="router:ipaddr_br"),
+        InlineKeyboardButton("🧭 ip route (v4)", callback_data="router:iproute4"),
+    )
+    kb.row(
+        InlineKeyboardButton("🧭 ip route (v6)", callback_data="router:iproute6"),
+        InlineKeyboardButton("⬅️ Back", callback_data="m:router"),
+    )
+    kb.row(InlineKeyboardButton("🏠 Home", callback_data="m:main"))
+    return kb
+
+
+def kb_router_fw() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
+    kb.row(
+        InlineKeyboardButton("mangle summary", callback_data="router:iptables:sum:mangle"),
+        InlineKeyboardButton("mangle raw", callback_data="router:iptables:raw:mangle"),
+    )
+    kb.row(
+        InlineKeyboardButton("filter summary", callback_data="router:iptables:sum:filter"),
+        InlineKeyboardButton("filter raw", callback_data="router:iptables:raw:filter"),
+    )
+    kb.row(
+        InlineKeyboardButton("⬅️ Back", callback_data="m:router"),
+        InlineKeyboardButton("🏠 Home", callback_data="m:main"),
+    )
+    return kb
+
+
+def kb_router_dhcp() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
+    kb.row(
+        InlineKeyboardButton("LAN", callback_data="router:dhcp:list:lan"),
+        InlineKeyboardButton("Wi‑Fi", callback_data="router:dhcp:list:wifi"),
+        InlineKeyboardButton("All", callback_data="router:dhcp:list:all"),
+    )
+    kb.row(
+        InlineKeyboardButton("⬅️ Back", callback_data="m:router"),
+        InlineKeyboardButton("🏠 Home", callback_data="m:main"),
+    )
+    return kb
+
 
 
 def kb_hydra(variant: str) -> InlineKeyboardMarkup:
@@ -1405,10 +1630,11 @@ class Monitor(threading.Thread):
     def stop(self) -> None:
         self._stop.set()
 
-    def _cooldown_ok(self, key: str) -> bool:
+    def _cooldown_ok(self, key: str, interval_sec: Optional[int] = None) -> bool:
         now = time.time()
         last = self._notify_last.get(key, 0)
-        if now - last >= self.cfg.notify_cooldown_sec:
+        min_iv = interval_sec if interval_sec is not None else self.cfg.notify_cooldown_sec
+        if now - last >= min_iv:
             self._notify_last[key] = now
             return True
         return False
@@ -1534,7 +1760,7 @@ class Monitor(threading.Thread):
     def _check_resources(self) -> None:
         l1, _, _ = self.router.loadavg()
         _, free_mb = self.router.disk_free_mb("/opt")
-        if l1 >= self.cfg.cpu_load_threshold and self._cooldown_ok("res:load"):
+        if l1 >= self.cfg.cpu_load_threshold and self._cooldown_ok("res:load", interval_sec=self.cfg.notify_load_interval_sec):
             self._notify_admins(
                 self._fmt_notice(
                     title="📈⚠️ <b>Высокая нагрузка</b>",
@@ -1543,12 +1769,16 @@ class Monitor(threading.Thread):
                 ),
                 reply_markup=kb_notice_actions(primary_cb="router:status", logs_cb="logs:bot")
             )
-        if free_mb <= self.cfg.disk_free_mb_threshold and self._cooldown_ok("res:disk"):
+        if free_mb <= self.cfg.disk_free_mb_threshold and self._cooldown_ok("res:disk", interval_sec=self.cfg.notify_disk_interval_sec):
+            is_usb, src = self.router.opt_storage_info()
+            hint = "Удалить лишнее: очистить логи/кэш, убрать ненужные пакеты"
+            if not is_usb:
+                hint = "Похоже, /opt на внутренней памяти. Лучше перенести Entware на USB/SSD или освободить место (opkg remove, очистка логов)."
             self._notify_admins(
                 self._fmt_notice(
                     title="💾⚠️ <b>Мало места на /opt</b>",
-                    summary_lines=[f"Свободно: <code>{free_mb} MB</code>"],
-                    hint="Удалить лишнее: очистить логи/кэш, убрать ненужные пакеты"
+                    summary_lines=[f"Свободно: <code>{free_mb} MB</code>", f"Носитель: <code>{escape_html(src)}</code>"],
+                    hint=hint
                 ),
                 reply_markup=kb_notice_actions(primary_cb="m:opkg")
             )
@@ -1782,7 +2012,7 @@ class App:
     def __init__(self, cfg: BotConfig):
         self.cfg = cfg
         self.bot = telebot.TeleBot(cfg.bot_token, parse_mode="HTML", threaded=True)
-        self.sh = Shell(timeout_sec=cfg.command_timeout_sec)
+        self.sh = Shell(timeout_sec=cfg.command_timeout_sec, debug=cfg.debug_enabled, debug_output_max=cfg.debug_log_output_max)
 
         self.router = RouterDriver(self.sh)
         self.opkg = OpkgDriver(self.sh)
@@ -1942,6 +2172,22 @@ class App:
                 return self._deny(m.chat.id)
             text = self.render_main()
             self.send_or_edit(m.chat.id, text, reply_markup=kb_main(self.snapshot(), self.capabilities()))
+
+        @self.bot.message_handler(commands=["debug_on"])
+        def _debug_on(m: Message) -> None:
+            if m.from_user.id not in self.cfg.admins:
+                return
+            self.cfg.debug_enabled = True
+            self.sh.debug = True
+            self.bot.send_message(m.chat.id, "🐞 Debug: <b>ON</b>")
+
+        @self.bot.message_handler(commands=["debug_off"])
+        def _debug_off(m: Message) -> None:
+            if m.from_user.id not in self.cfg.admins:
+                return
+            self.cfg.debug_enabled = False
+            self.sh.debug = False
+            self.bot.send_message(m.chat.id, "🐞 Debug: <b>OFF</b>")
 
         @self.bot.message_handler(commands=["help"])
         def _help(m: Message) -> None:
@@ -2165,19 +2411,129 @@ class App:
         if data == "router:status":
             self.send_or_edit(chat_id, self.router.basic_status_text(), reply_markup=kb_router(), message_id=msg_id)
             return
+
         if data == "router:net":
+            self.send_or_edit(chat_id, "⏳ Проверяю интернет…", reply_markup=kb_router(), message_id=msg_id)
             ok, txt = self.router.internet_check()
             self.send_or_edit(
                 chat_id,
-                f"🌐 <b>Интернет тест</b>\n{'✅ OK' if ok else '⚠️ проблемы'}\n<code>{escape_html(txt)}</code>",
+                f"🌐 <b>Интернет тест</b>\n{'✅ OK' if ok else '⚠️ проблемы'}\n{fmt_code(txt)}",
                 reply_markup=kb_router(),
                 message_id=msg_id,
             )
             return
-        if data == "router:dhcp":
-            txt = self.router.show_dhcp_clients()
-            self.send_or_edit(chat_id, f"👥 <b>DHCP bindings</b>\n<code>{escape_html(txt)}</code>", reply_markup=kb_router(), message_id=msg_id)
+
+        if data == "router:netmenu":
+            self.send_or_edit(chat_id, "🌐 <b>Сеть</b>", reply_markup=kb_router_net(), message_id=msg_id)
             return
+        if data == "router:fwmenu":
+            self.send_or_edit(chat_id, "🧱 <b>Firewall</b>", reply_markup=kb_router_fw(), message_id=msg_id)
+            return
+        if data == "router:dhcpmenu":
+            self.send_or_edit(chat_id, "👥 <b>DHCP клиенты</b>", reply_markup=kb_router_dhcp(), message_id=msg_id)
+            return
+
+        if data == "router:ipaddr_br":
+            self.send_or_edit(chat_id, "⏳ Выполняю…", reply_markup=kb_router_net(), message_id=msg_id)
+            rc, out = self.sh.run(["ip", "-br", "addr"], timeout_sec=10)
+            if rc != 0:
+                rc, out = self.sh.run(["ip", "addr"], timeout_sec=10)
+            self.send_or_edit(chat_id, f"📡 <b>ip addr</b>\n{fmt_code(out)}", reply_markup=kb_router_net(), message_id=msg_id)
+            return
+
+        if data == "router:iproute4":
+            self.send_or_edit(chat_id, "⏳ Выполняю…", reply_markup=kb_router_net(), message_id=msg_id)
+            rc, out = self.sh.run(["ip", "-4", "route"], timeout_sec=10)
+            self.send_or_edit(chat_id, f"🧭 <b>ip route -4</b>\n{fmt_code(fmt_ip_route(out))}", reply_markup=kb_router_net(), message_id=msg_id)
+            return
+
+        if data == "router:iproute6":
+            self.send_or_edit(chat_id, "⏳ Выполняю…", reply_markup=kb_router_net(), message_id=msg_id)
+            rc, out = self.sh.run(["ip", "-6", "route"], timeout_sec=10)
+            self.send_or_edit(chat_id, f"🧭 <b>ip route -6</b>\n{fmt_code(fmt_ip_route(out))}", reply_markup=kb_router_net(), message_id=msg_id)
+            return
+
+        if data.startswith("router:iptables:"):
+            if not which("iptables"):
+                self.send_or_edit(chat_id, "iptables не найден.", reply_markup=kb_router_fw(), message_id=msg_id)
+                return
+            _, view, table = data.split(":")
+            self.send_or_edit(chat_id, "⏳ Выполняю…", reply_markup=kb_router_fw(), message_id=msg_id)
+            rc, out = self.sh.run(["iptables", "-t", table, "-S"], timeout_sec=15)
+            if view == "sum":
+                out2 = summarize_iptables(out)
+                self.send_or_edit(chat_id, f"🧱 <b>iptables -t {escape_html(table)} summary</b>\n{fmt_code(out2)}", reply_markup=kb_router_fw(), message_id=msg_id)
+            else:
+                self.send_or_edit(chat_id, f"🧱 <b>iptables -t {escape_html(table)} -S</b>\n{fmt_code(out)}", reply_markup=kb_router_fw(), message_id=msg_id)
+            return
+
+        if data.startswith("router:dhcp:list:"):
+            kind = data.split(":")[-1]
+            self.send_or_edit(chat_id, "⏳ Загружаю DHCP…", reply_markup=kb_router_dhcp(), message_id=msg_id)
+            clients = self.router.dhcp_clients_enriched(limit=400)
+            # cache
+            self.dhcp_cache = getattr(self, "dhcp_cache", {})
+            self.dhcp_cache[chat_id] = {"ts": time.time(), "clients": clients}
+
+            lan, wifi = split_clients_lan_wifi(clients)
+            view = clients
+            title = "All"
+            if kind == "lan":
+                view, title = lan, "LAN"
+            elif kind == "wifi":
+                view, title = wifi, "Wi‑Fi"
+
+            if not view:
+                self.send_or_edit(chat_id, f"👥 <b>DHCP {escape_html(title)}</b>\nНет данных (или не удалось определить).", reply_markup=kb_router_dhcp(), message_id=msg_id)
+                return
+
+            kb = InlineKeyboardMarkup()
+            for i, c in enumerate(view[:15]):
+                label = f"{c.get('ip','?')}  {c.get('name') or c.get('mac','')}"
+                kb.row(InlineKeyboardButton(label[:60], callback_data=f"router:dhcp:detail:{kind}:{i}"))
+            kb.row(InlineKeyboardButton("⬅️ Back", callback_data="router:dhcpmenu"), InlineKeyboardButton("🏠 Home", callback_data="m:main"))
+
+            lines = []
+            for c in view[:40]:
+                iface = c.get("iface","")
+                suffix = f" ({iface})" if iface else ""
+                lines.append(f"{c.get('ip','?'):15} {c.get('mac',''):17} {c.get('name','')}{suffix}")
+            lst = "\n".join(lines)
+            self.send_or_edit(chat_id, f"👥 <b>DHCP {escape_html(title)}</b>\n{fmt_code(lst)}", reply_markup=kb, message_id=msg_id)
+            return
+
+        if data.startswith("router:dhcp:detail:"):
+            parts = data.split(":")
+            kind = parts[3]
+            idx = int(parts[4])
+            cache = getattr(self, "dhcp_cache", {}).get(chat_id)
+            if not cache or (time.time() - cache.get("ts", 0) > 600):
+                self.send_or_edit(chat_id, "⚠️ Кэш устарел. Открой DHCP заново.", reply_markup=kb_router_dhcp(), message_id=msg_id)
+                return
+            clients = cache.get("clients", [])
+            lan, wifi = split_clients_lan_wifi(clients)
+            view = clients
+            if kind == "lan":
+                view = lan
+            elif kind == "wifi":
+                view = wifi
+            if idx < 0 or idx >= len(view):
+                self.send_or_edit(chat_id, "⚠️ Не найдено. Открой DHCP заново.", reply_markup=kb_router_dhcp(), message_id=msg_id)
+                return
+            c = view[idx]
+            detail = (
+                f"👤 <b>DHCP client</b>\n"
+                f"• IP: <code>{escape_html(c.get('ip','?'))}</code>\n"
+                f"• MAC: <code>{escape_html(c.get('mac','?'))}</code>\n"
+                f"• Name: <code>{escape_html(c.get('name',''))}</code>\n"
+                f"• Iface: <code>{escape_html(c.get('iface',''))}</code>\n"
+                f"• Raw: <code>{escape_html(c.get('rest',''))}</code>"
+            )
+            kb = InlineKeyboardMarkup()
+            kb.row(InlineKeyboardButton("⬅️ Back", callback_data=f"router:dhcp:list:{kind}"), InlineKeyboardButton("🏠 Home", callback_data="m:main"))
+            self.send_or_edit(chat_id, detail, reply_markup=kb, message_id=msg_id)
+            return
+
         if data == "router:exportcfg":
             ok, msg, p = self.router.export_running_config()
             if ok and p:
@@ -2188,21 +2544,7 @@ class App:
             else:
                 self.bot.send_message(chat_id, f"⚠️ {escape_html(msg)}")
             return
-        if data == "router:ipaddr":
-            rc, out = self.sh.run(["ip", "addr"], timeout_sec=10)
-            self.send_or_edit(chat_id, f"📡 <b>ip addr</b>\n<code>{escape_html(out[:3500])}</code>", reply_markup=kb_router(), message_id=msg_id)
-            return
-        if data == "router:iproute":
-            rc, out = self.sh.run(["ip", "route"], timeout_sec=10)
-            self.send_or_edit(chat_id, f"🧭 <b>ip route</b>\n<code>{escape_html(out[:3500])}</code>", reply_markup=kb_router(), message_id=msg_id)
-            return
-        if data == "router:iptables":
-            if which("iptables"):
-                rc, out = self.sh.run(["iptables", "-t", "mangle", "-S"], timeout_sec=15)
-                self.send_or_edit(chat_id, f"🧱 <b>iptables -t mangle -S</b>\n<code>{escape_html(out[:3500])}</code>", reply_markup=kb_router(), message_id=msg_id)
-            else:
-                self.send_or_edit(chat_id, "iptables не найден.", reply_markup=kb_router(), message_id=msg_id)
-            return
+
         if data.startswith("router:reboot?confirm=1"):
             self.send_or_edit(
                 chat_id,
@@ -2213,8 +2555,7 @@ class App:
             return
         if data == "router:reboot!do":
             self.send_or_edit(chat_id, "Перезагружаю… (соединение может пропасть)", reply_markup=kb_home_back(), message_id=msg_id)
-            rc, out = self.router.reboot()
-            # скорее всего, не успеем отправить результат
+            self.router.reboot()
             return
 
     def _handle_hydra_cb(self, chat_id: int, msg_id: int, data: str, user_id: int) -> None:
@@ -2265,37 +2606,59 @@ class App:
             self.send_or_edit(chat_id, self.hydra.status_text(), reply_markup=kb_hydra(variant), message_id=msg_id)
             return
         if data == "hydra:diag":
+            self.send_or_edit(chat_id, "⏳ Диагностика…", reply_markup=kb_hydra(variant), message_id=msg_id)
             ipset_txt = self.hydra.diag_ipset()
             ipt_txt = self.hydra.diag_iptables()
-            txt = f"🛠 <b>HydraRoute diag</b>\n\n<code>{escape_html(ipset_txt[:1200])}</code>\n\n<code>{escape_html(ipt_txt[:2000])}</code>"
+            txt = "🛠 <b>HydraRoute diag</b>\n\n<b>ipset</b>\n" + fmt_code(ipset_txt) + "\n\n<b>iptables</b>\n" + fmt_code(ipt_txt)
             self.send_or_edit(chat_id, txt, reply_markup=kb_hydra(variant), message_id=msg_id)
             return
         if data == "hydra:start":
+            self.send_or_edit(chat_id, "⏳ Выполняю…", reply_markup=kb_hydra(variant), message_id=msg_id)
             if variant == "neo":
                 rc, out = self.hydra.neo_cmd("start")
             elif variant == "classic":
                 rc, out = self.hydra.classic_cmd("start")
             else:
                 rc, out = 127, "не установлен"
-            self.send_or_edit(chat_id, f"▶️ start rc={rc}\n<code>{escape_html(out[:3000])}</code>", reply_markup=kb_hydra(variant), message_id=msg_id)
+            status = "✅ OK" if rc == 0 else "⚠️ FAIL"
+            txt = f"▶️ <b>start</b> — {status} (rc={rc})\n"
+            if self.sh.debug and out:
+                txt += fmt_code(out)
+                txt += "\n"
+            txt += self.hydra.status_text()
+            self.send_or_edit(chat_id, txt, reply_markup=kb_hydra(self.hydra.installed_variant()), message_id=msg_id)
             return
         if data == "hydra:stop":
+            self.send_or_edit(chat_id, "⏳ Выполняю…", reply_markup=kb_hydra(variant), message_id=msg_id)
             if variant == "neo":
                 rc, out = self.hydra.neo_cmd("stop")
             elif variant == "classic":
                 rc, out = self.hydra.classic_cmd("stop")
             else:
                 rc, out = 127, "не установлен"
-            self.send_or_edit(chat_id, f"⏹ stop rc={rc}\n<code>{escape_html(out[:3000])}</code>", reply_markup=kb_hydra(variant), message_id=msg_id)
+            status = "✅ OK" if rc == 0 else "⚠️ FAIL"
+            txt = f"⏹ <b>stop</b> — {status} (rc={rc})\n"
+            if self.sh.debug and out:
+                txt += fmt_code(out)
+                txt += "\n"
+            txt += self.hydra.status_text()
+            self.send_or_edit(chat_id, txt, reply_markup=kb_hydra(self.hydra.installed_variant()), message_id=msg_id)
             return
         if data == "hydra:restart":
+            self.send_or_edit(chat_id, "⏳ Выполняю…", reply_markup=kb_hydra(variant), message_id=msg_id)
             if variant == "neo":
                 rc, out = self.hydra.neo_cmd("restart")
             elif variant == "classic":
                 rc, out = self.hydra.classic_cmd("restart")
             else:
                 rc, out = 127, "не установлен"
-            self.send_or_edit(chat_id, f"🔄 restart rc={rc}\n<code>{escape_html(out[:3000])}</code>", reply_markup=kb_hydra(variant), message_id=msg_id)
+            status = "✅ OK" if rc == 0 else "⚠️ FAIL"
+            txt = f"🔄 <b>restart</b> — {status} (rc={rc})\n"
+            if self.sh.debug and out:
+                txt += fmt_code(out)
+                txt += "\n"
+            txt += self.hydra.status_text()
+            self.send_or_edit(chat_id, txt, reply_markup=kb_hydra(self.hydra.installed_variant()), message_id=msg_id)
             return
         if data == "hydra:hrweb":
             url = f"http://{self.router.lan_ip()}:2000"
@@ -2405,15 +2768,22 @@ class App:
             self.send_or_edit(chat_id, self.nfqws.status_text(), reply_markup=kb_nfqws(), message_id=msg_id)
             return
         if data == "nfqws:diag":
+            self.send_or_edit(chat_id, "⏳ Диагностика…", reply_markup=kb_nfqws(), message_id=msg_id)
             diag = self.nfqws.diag_iptables_queue()
-            hook = "✅" if NFQWS_NETFILTER_HOOK.exists() else "⚠️ нет hook /opt/etc/ndm/netfilter.d/100-nfqws2.sh"
-            txt = f"🛠 <b>NFQWS2 diag</b>\n{hook}\n\n<code>{escape_html(diag[:3500])}</code>"
+            txt = "🛠 <b>NFQWS2 diag</b>\n\n" + fmt_code(diag)
             self.send_or_edit(chat_id, txt, reply_markup=kb_nfqws(), message_id=msg_id)
             return
         if data in ("nfqws:start", "nfqws:stop", "nfqws:restart", "nfqws:reload"):
             action = data.split(":", 1)[1]
+            self.send_or_edit(chat_id, "⏳ Выполняю…", reply_markup=kb_nfqws(), message_id=msg_id)
             rc, out = self.nfqws.init_action(action)
-            self.send_or_edit(chat_id, f"{action} rc={rc}\n<code>{escape_html(out[:3000])}</code>", reply_markup=kb_nfqws(), message_id=msg_id)
+            status = "✅ OK" if rc == 0 else "⚠️ FAIL"
+            txt = f"🧷 <b>{escape_html(action)}</b> — {status} (rc={rc})\n"
+            if self.sh.debug and out:
+                txt += fmt_code(out)
+                txt += "\n"
+            txt += self.nfqws.status_text()
+            self.send_or_edit(chat_id, txt, reply_markup=kb_nfqws(), message_id=msg_id)
             return
         if data == "nfqws:web":
             caps = self.capabilities()

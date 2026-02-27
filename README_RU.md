@@ -62,3 +62,27 @@ tail -n 200 /opt/var/log/keenetic-tg-bot.log
 
 ## Безопасность
 Не публикуй токен. Если утёк — отзови у BotFather (`/revoke`) и запусти установку с `--bot --reconfig`.
+
+
+## Быстрая диагностика и Debug
+- Включить подробное логирование команд и времени выполнения:
+  - `/debug_on`
+  - `/debug_off`
+- Логи: `/opt/var/log/keenetic-tg-bot.log`
+
+> В Debug режиме бот пишет в лог все команды, rc и время выполнения. Это помогает ловить «долгие ответы».
+
+
+
+## Меню Router
+Добавлены саб-меню:
+- **Сеть**: `ip addr (brief)`, `ip route v4/v6` (группировка по dev, default отдельно)
+- **Firewall**: summary/raw для `iptables` (mangle/filter)
+- **DHCP клиенты**: LAN / Wi‑Fi / All + карточка каждого клиента (best‑effort разделение)
+
+
+
+## Анти-спам уведомлений
+Уведомление «мало места на /opt» теперь приходит **не чаще 1 раза в 6 часов** (настраивается в `config.json`):
+- `notify.disk_interval_sec`
+
