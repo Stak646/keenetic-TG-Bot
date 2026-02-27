@@ -16,6 +16,13 @@ PY="/opt/bin/python3"
 export BOT_CONFIG="$CONFIG"
 export PYTHONUNBUFFERED=1
 
+pid_matches() {
+  pid="$1"
+  [ -n "$pid" ] || return 1
+  [ -r "/proc/$pid/cmdline" ] || return 1
+  tr '\0' ' ' < "/proc/$pid/cmdline" | grep -Fq "$BOT"
+}
+
 start() {
   mkdir -p /opt/var/run /opt/var/log
 
@@ -51,10 +58,13 @@ stop() {
 }
 
 status() {
-  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
-    echo "RUNNING PID $(cat "$PIDFILE")"
+  if [ -f "$PIDFILE" ]; then
+  PID="$(cat "$PIDFILE" 2>/dev/null)"
+  if kill -0 "$PID" 2>/dev/null && pid_matches "$PID"; then
+    echo "RUNNING PID $PID"
     return 0
   fi
+fi
   echo "STOPPED"
   return 3
 }
