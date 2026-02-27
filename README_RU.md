@@ -1,92 +1,126 @@
-# Keenetic TG Bot (Entware)
+# Keenetic TG Bot (alfa)
 
-Telegram-бот, который запускается **на роутере** (Entware `/opt`) и управляет: Router / HydraRoute / NFQWS2(+web) / AWG Manager / opkg + уведомления.
+Telegram‑бот для роутеров Keenetic (Entware): управление компонентами, быстрые диагностические команды, модульное меню.
 
-## Установка (one-liner)
-Интерактивно (в начале выбор языка RU/EN):
+> Ветка **`alfa`** — активная ветка разработки.
+
+## Что уже реализовано
+
+- **Единый стиль кнопок** + саб‑меню + пагинация для больших списков.
+- **Роутер**:
+  - информация (RAM/CPU/uptime, место на `/opt`, архитектуры opkg)
+  - маршруты IPv4/IPv6 (постранично)
+  - IP‑адреса интерфейсов (постранично)
+  - правила iptables/ip6tables (постранично)
+  - DHCP‑клиенты + детальная карточка клиента  
+    *(разделение LAN/Wi‑Fi включается автоматически, если есть `iw`)*
+  - перезагрузка с подтверждением
+- **OPKG**:
+  - `opkg update`, `opkg upgrade` (в фоне + “анимация”)
+  - список установленных пакетов (страницы)
+  - поиск пакета (после нажатия “Поиск” отправьте текстом название)
+- **Менеджер компонентов**:
+  - установка/удаление (и часть действий сервиса) для:
+    - HydraRoute (hrneo/hrweb)
+    - NFQWS2 (+ опционально web‑интерфейс)
+    - AWG Manager
+  - **защита от неправильной архитектуры**: фиды выбираются по `opkg print-architecture`.
+- **HydraRoute / NFQWS2 / AWG**: обзор + действия (start/stop/restart).
+- **Speed test**:
+  - быстрый HTTP‑тест загрузки на “качественные” узлы (Cloudflare / Hetzner)
+  - AWG speed test (если доступно API AWG Manager)
+  - опционально `speedtest-go` (если доступен/устанавливается)
+
+## Поддерживаемые архитектуры
+
+- `mips`
+- `mipsel`
+- `aarch64`
+
+## Установка (Entware)
+
+### One‑liner (alfa)
+
 ```sh
-opkg update && opkg install ca-certificates curl && \
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --yes --lang ru --token "YOUR_BOT_TOKEN" --admin 123456789
 ```
 
-Автоматически:
-```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | \
-sh -s -- --yes --bot --token 123456:ABCDEF --admin 599497434
-```
-
-Полный вывод:
-```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --debug
-```
-
-## Как получить bot_token
-1) Telegram → **@BotFather**
-2) `/newbot`
-3) Скопируй токен вида `123456:ABCDEF...`
-
-## Как узнать свой user_id
-Проще всего: Telegram → **@userinfobot** → `Id: ...`
-
-## Где лежат файлы
-- Код и конфиг: `/etc/keenetic-tg-bot/` (на Keenetic `/etc` часто read-only, поэтому установщик автоматически использует `/opt/etc/keenetic-tg-bot/`)
-- init-скрипт: `/opt/etc/init.d/S99keenetic-tg-bot`
-- лог бота: `/opt/var/log/keenetic-tg-bot.log`
-- лог установки: `/opt/var/log/keenetic-tg-bot-install.log`
-
-<details>
-<summary>Параметры установки</summary>
-
+Опции:
+- `--branch alfa|main`
+- `--token ...`
+- `--admin <telegram_user_id>` (можно несколько раз)
 - `--lang ru|en`
-- `--debug` / `-debug` — подробный вывод
-- `--yes` — без вопросов
-- `--bot` — установить/обновить бота
-- `--token <BOT_TOKEN>` — токен BotFather
-- `--admin <USER_ID>` — твой Telegram user_id (число)
-- `--reconfig` — переписать config.json (спросит token/id)
-- `--hydra` — HydraRoute Neo
-- `--nfqws2` — NFQWS2
-- `--nfqwsweb` — NFQWS web UI (также ставит NFQWS2)
-- `--awg` — AWG Manager
-- `--cron` — cron
-- `--weekly` — автообновление каждый Чт 06:00
+- `--debug`
+- `--no-start`
 
-</details>
+## Конфиг
 
-## Управление сервисом
+Файл:
+- `/opt/etc/keenetic-tg-bot/config/config.json`
+
+Главное:
+- `bot_token`
+- `admins` (очень рекомендуется)
+- `language` (`ru` / `en`)
+- `performance.debug`
+
+## Сервис
+
 ```sh
-/opt/etc/init.d/S99keenetic-tg-bot status
-/opt/etc/init.d/S99keenetic-tg-bot restart
-tail -n 200 /opt/var/log/keenetic-tg-bot.log
-```
-
-## Безопасность
-Не публикуй токен. Если утёк — отзови у BotFather (`/revoke`) и запусти установку с `--bot --reconfig`.
-
-
-
-### Обновление уже установленного бота (без переустановки модулей)
-```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes
-```
-Если видишь ошибку **409 Conflict (getUpdates)** — запущено несколько экземпляров. Исправь:
-```sh
-/opt/etc/init.d/S99keenetic-tg-bot stop
-ps w | grep -F /opt/etc/keenetic-tg-bot/bot.py | grep -v grep
 /opt/etc/init.d/S99keenetic-tg-bot start
+/opt/etc/init.d/S99keenetic-tg-bot stop
+/opt/etc/init.d/S99keenetic-tg-bot restart
+/opt/etc/init.d/S99keenetic-tg-bot status
 ```
 
+## Логи
 
-### Debug
-- `/debug_on` — включить подробный лог команд и времени выполнения
-- `/debug_off` — выключить
-Лог: `/opt/var/log/keenetic-tg-bot.log`
+- `/opt/var/log/keenetic-tg-bot.log` — основной лог (rotating)
+- `/opt/var/log/keenetic-tg-bot-console.log` — вывод демона (stdout/stderr)
+
+## Важные примечания
+
+- Ошибка **409 Conflict** обычно означает, что бот запущен в двух местах (2 процесса/2 устройства с одним токеном).
+- Бот сам подбирает количество workers по памяти роутера (консервативные значения).
+
+## Структура проекта
+
+В репозитории:
+- `keenetic-tg-bot/` → копируется в `/opt/etc/keenetic-tg-bot`
+  - `Main.py`
+  - `config/`
+  - `modules/`
+  - `scripts/`
+
+## Идеи “под вопросом” (нужна проверка на реальном Keenetic)
+
+1. **Разделение DHCP клиентов на LAN/Wi‑Fi**  
+   Работает, если доступна команда `iw` (получаем MAC‑адреса станций).  
+   На некоторых моделях/прошивках `iw` может отсутствовать.
+
+2. **Пакет speedtest-go в Entware**  
+   На части архитектур может отсутствовать или тянуть много зависимостей.
+
+3. **Точные названия пакетов NFQWS web**  
+   В разных сборках имя может отличаться (`nfqws-keenetic-web` / другое).  
+   В таком случае правится 1 строка в менеджере компонентов.
+
+4. **AWG Manager API**  
+   Эндпоинты могут немного отличаться в разных версиях.  
+   Если какой-то пункт не работает — лог покажет URL/ошибку, легко поправим.
+
+Если хотите — можем расширить эти пункты после 1‑2 логов с вашего роутера.
 
 
-### Network stability
-Polling is now wrapped with exponential backoff to recover from transient disconnects (RemoteDisconnected/timeouts).
+## Как добавить новый модуль (для расширений)
 
+1. Драйвер (обёртка над shell/API) — `keenetic-tg-bot/modules/drivers/`
+2. UI‑модуль — `keenetic-tg-bot/modules/components/` (наследник `ComponentBase`)
+3. Регистрация в `keenetic-tg-bot/Main.py`:
 
-### Если видишь Read timed out на api.telegram.org
-- Проверь доступ с роутера: `curl -vk --connect-timeout 10 --max-time 20 https://api.telegram.org/`
-- Если включены маршрутизации/обходы (HydraRoute/NFQWS/AWG), попробуй исключить `api.telegram.org` из туннелей или направить его напрямую через WAN.
+```py
+from modules.components.my_component import MyComponent
+app.components["mx"] = MyComponent(my_driver)
+```
+
+Формат callback: `mx|command|k=v&k2=v2`

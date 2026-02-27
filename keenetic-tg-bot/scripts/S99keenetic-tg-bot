@@ -1,0 +1,91 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          keenetic-tg-bot
+# Required-Start:    $local_fs $network
+# Required-Stop:     $local_fs $network
+# Default-Start:     99
+# Default-Stop:      10
+# Short-Description: Keenetic Telegram Bot (Entware)
+### END INIT INFO
+
+PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+BOT_DIR="/opt/etc/keenetic-tg-bot"
+MAIN="$BOT_DIR/Main.py"
+PIDFILE="/opt/var/run/keenetic-tg-bot.pid"
+LOGFILE="/opt/var/log/keenetic-tg-bot-console.log"
+
+PY="/opt/bin/python3"
+[ -x "$PY" ] || PY="python3"
+
+mkdir -p /opt/var/run /opt/var/log 2>/dev/null
+
+is_running() {
+  [ -f "$PIDFILE" ] || return 1
+  PID="$(cat "$PIDFILE" 2>/dev/null)"
+  [ -n "$PID" ] || return 1
+  kill -0 "$PID" 2>/dev/null
+}
+
+start() {
+  if [ ! -f "$MAIN" ]; then
+    echo "Main.py not found: $MAIN"
+    return 1
+  fi
+  if is_running; then
+    echo "already running (pid $(cat "$PIDFILE"))"
+    return 0
+  fi
+  echo "starting..."
+  if command -v nohup >/dev/null 2>&1; then
+    nohup "$PY" "$MAIN" >>"$LOGFILE" 2>&1 &
+  else
+    "$PY" "$MAIN" >>"$LOGFILE" 2>&1 &
+  fi
+  echo $! >"$PIDFILE"
+  echo "started (pid $(cat "$PIDFILE"))"
+  return 0
+}
+
+stop() {
+  if ! is_running; then
+    echo "not running"
+    rm -f "$PIDFILE" 2>/dev/null
+    return 0
+  fi
+  PID="$(cat "$PIDFILE")"
+  echo "stopping (pid $PID)..."
+  kill "$PID" 2>/dev/null
+  # wait up to 10s
+  i=0
+  while kill -0 "$PID" 2>/dev/null; do
+    i=$((i+1))
+    [ "$i" -ge 10 ] && break
+    sleep 1
+  done
+  if kill -0 "$PID" 2>/dev/null; then
+    echo "force killing..."
+    kill -9 "$PID" 2>/dev/null
+  fi
+  rm -f "$PIDFILE" 2>/dev/null
+  echo "stopped"
+  return 0
+}
+
+status() {
+  if is_running; then
+    echo "running (pid $(cat "$PIDFILE"))"
+    return 0
+  else
+    echo "stopped"
+    return 3
+  fi
+}
+
+case "$1" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; start ;;
+  status) status ;;
+  *) echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
