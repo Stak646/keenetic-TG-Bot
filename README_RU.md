@@ -85,3 +85,8 @@ ps w | grep -F /opt/etc/keenetic-tg-bot/bot.py | grep -v grep
 
 ### Network stability
 Polling is now wrapped with exponential backoff to recover from transient disconnects (RemoteDisconnected/timeouts).
+
+
+### Если видишь Read timed out на api.telegram.org
+- Проверь доступ с роутера: `curl -vk --connect-timeout 10 --max-time 20 https://api.telegram.org/`
+- Если включены маршрутизации/обходы (HydraRoute/NFQWS/AWG), попробуй исключить `api.telegram.org` из туннелей или направить его напрямую через WAN.

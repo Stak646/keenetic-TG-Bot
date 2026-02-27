@@ -26,9 +26,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Callable, Any
 
 import telebot
+import logging
 from telebot import apihelper
 apihelper.CONNECT_TIMEOUT = 10
-apihelper.READ_TIMEOUT = 35
+apihelper.READ_TIMEOUT = 90
+apihelper.SESSION_TIME_TO_LIVE = 5 * 60
+telebot.logger.setLevel(logging.ERROR)
 
 from telebot.types import (
     InlineKeyboardMarkup,
@@ -2894,7 +2897,7 @@ class App:
             try:
 
 
-                self.bot.infinity_polling(timeout=30, long_polling_timeout=30, interval=self.cfg.poll_interval_sec, skip_pending=True, allowed_updates=["message","callback_query"])
+                self.bot.infinity_polling(timeout=30, long_polling_timeout=30, interval=self.cfg.poll_interval_sec, skip_pending=True, allowed_updates=["message","callback_query"], logger_level=(logging.INFO if self.cfg.debug_enabled else logging.ERROR), non_stop=True)
 
 
                 backoff = 5
