@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
-from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
-from .constants import DEFAULT_CONFIG_PATH, ALT_CONFIG_PATH
+from .constants import DEFAULT_CONFIG_PATH
 from .utils import log_line
+
+ALT_CONFIG_PATHS = [
+    "/opt/etc/keenetic-tg-bot/config/config.json",
+    "/opt/etc/keenetic-tg-bot/config.json",
+    "/opt/etc/keenetic-tg-bot/config/config.json",
+]
 
 @dataclass
 class BotConfig:
-
     bot_token: str
     admins: List[int]
     allow_chats: Optional[List[int]] = None  # если None/пусто — разрешаем личку админам
@@ -44,12 +49,32 @@ class BotConfig:
     debug_log_output_max: int = 5000
 
 
+def load_config_file() -> str:
+    # env override
+    p = os.environ.get("BOT_CONFIG")
+    if p and os.path.exists(p):
+        return p
+    for p in ALT_CONFIG_PATHS:
+        if os.path.exists(p):
+            return p
+    return DEFAULT_CONFIG_PATH
+
+
 def load_config(path: str) -> BotConfig:
     with open(path, "r", encoding="utf-8") as f:
         raw = json.load(f)
+
+    # admins: list of ints
+    admins = []
+    for x in (raw.get("admins") or raw.get("admin_ids") or []):
+        try:
+            admins.append(int(x))
+        except Exception:
+            pass
+
     return BotConfig(
-        bot_token=raw["bot_token"],
-        admins=raw["admins"],
+        bot_token=str(raw.get("bot_token", "")).strip(),
+        admins=admins,
         allow_chats=raw.get("allow_chats"),
         command_timeout_sec=int(raw.get("command_timeout_sec", 30)),
         poll_interval_sec=int(raw.get("poll_interval_sec", 2)),
@@ -64,10 +89,20 @@ def load_config(path: str) -> BotConfig:
         notify_on_internet_down=bool(raw.get("notify", {}).get("internet_down", True)),
         notify_on_log_errors=bool(raw.get("notify", {}).get("log_errors", True)),
         notify_cooldown_sec=int(raw.get("notify", {}).get("cooldown_sec", 300)),
-        notify_disk_interval_sec=int(raw.get("notify", {}).get("disk_interval_sec", 6*3600)),
-        notify_load_interval_sec=int(raw.get("notify", {}).get("load_interval_sec", 30*60)),
+        notify_disk_interval_sec=int(raw.get("notify", {}).get("disk_interval_sec", 6 * 3600)),
+        notify_load_interval_sec=int(raw.get("notify", {}).get("load_interval_sec", 30 * 60)),
         debug_enabled=bool(raw.get("debug", {}).get("enabled", False)),
         debug_log_output_max=int(raw.get("debug", {}).get("log_output_max", 5000)),
     )
 
 
+def load_config_or_exit() -> BotConfig:
+    path = load_config_file()
+    try:
+        cfg = load_config(path)
+        if not cfg.bot_token or not cfg.admins:
+            raise ValueError("bot_token/admins missing")
+        return cfg
+    except Exception as e:
+        log_line(f"Config error at {path}: {e}")
+        raise

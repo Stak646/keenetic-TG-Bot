@@ -6,18 +6,18 @@ Telegram-бот, который запускается **на роутере** (
 Интерактивно (в начале выбор языка RU/EN):
 ```sh
 opkg update && opkg install ca-certificates curl && \
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
 ```
 
 Автоматически:
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | \
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | \
 sh -s -- --yes --bot --token 123456:ABCDEF --admin 599497434
 ```
 
 Полный вывод:
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --debug
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --debug
 ```
 
 ## Как получить bot_token
@@ -67,7 +67,7 @@ tail -n 200 /opt/var/log/keenetic-tg-bot.log
 
 ### Обновление уже установленного бота (без переустановки модулей)
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --update-bot --yes
 ```
 Если видишь ошибку **409 Conflict (getUpdates)** — запущено несколько экземпляров. Исправь:
 ```sh
@@ -128,3 +128,14 @@ Install from `alfa`:
 ```
 curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
 ```
+
+
+## Files installed
+- Bot dir: `/opt/etc/keenetic-tg-bot/`
+  - `Main.py`
+  - `modules/` (drivers + other modules)
+  - `config/config.json`
+- Service: `/opt/etc/init.d/S99keenetic-tg-bot`
+
+
+> Примечание: проект сделан с помощью ИИ.

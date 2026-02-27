@@ -8,7 +8,7 @@ set -e
 export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 REPO="Stak646/keenetic-TG-Bot"
-BRANCH="main"
+BRANCH="alfa"
 
 LANG_SEL=""
 DEBUG=0
@@ -111,7 +111,7 @@ select_language() {
 
 pick_cfg_dir() {
   # /etc on Keenetic is usually read-only -> probe by creating a temp file
-  for d in /etc/keenetic-tg-bot /opt/etc/keenetic-tg-bot; do
+  for d in /opt/etc/keenetic-tg-bot /etc/keenetic-tg-bot; do
     mkdir -p "$d" >/dev/null 2>&1 || continue
     tfile="$d/.rwtest.$$"
     if ( : > "$tfile" ) 2>/dev/null; then
@@ -145,25 +145,38 @@ fetch_file() {
 
 ensure_repo_filesensure_repo_files() {
   TMP="/opt/tmp/keenetic-tg-bot-installer"
+  SRC_DIR="$TMP"
   rm -rf "$TMP" >/dev/null 2>&1 || true
   mkdir -p "$TMP"
+
+  fetch_file "Main.py" "$TMP/Main.py"
   fetch_file "bot.py" "$TMP/bot.py"
   fetch_file "config.example.json" "$TMP/config.example.json"
+  fetch_file "config/config.example.json" "$TMP/config/config.example.json"
   fetch_file "S99keenetic-tg-bot" "$TMP/S99keenetic-tg-bot"
   fetch_file "install.sh" "$TMP/install.sh"
-  fetch_file "keenetic_tg_bot/__init__.py" "$TMP/keenetic_tg_bot/__init__.py"
-  fetch_file "keenetic_tg_bot/constants.py" "$TMP/keenetic_tg_bot/constants.py"
-  fetch_file "keenetic_tg_bot/utils.py" "$TMP/keenetic_tg_bot/utils.py"
-  fetch_file "keenetic_tg_bot/config.py" "$TMP/keenetic_tg_bot/config.py"
-  fetch_file "keenetic_tg_bot/profiler.py" "$TMP/keenetic_tg_bot/profiler.py"
-  fetch_file "keenetic_tg_bot/shell.py" "$TMP/keenetic_tg_bot/shell.py"
-  fetch_file "keenetic_tg_bot/drivers.py" "$TMP/keenetic_tg_bot/drivers.py"
-  fetch_file "keenetic_tg_bot/ui.py" "$TMP/keenetic_tg_bot/ui.py"
-  fetch_file "keenetic_tg_bot/monitor.py" "$TMP/keenetic_tg_bot/monitor.py"
-  fetch_file "keenetic_tg_bot/storage.py" "$TMP/keenetic_tg_bot/storage.py"
-  fetch_file "keenetic_tg_bot/diag.py" "$TMP/keenetic_tg_bot/diag.py"
-  fetch_file "keenetic_tg_bot/app.py" "$TMP/keenetic_tg_bot/app.py"
-  printf "%s\n" "$TMP"
+
+  # modules (bot runtime)
+  fetch_file "modules/__init__.py" "$TMP/modules/__init__.py"
+  fetch_file "modules/constants.py" "$TMP/modules/constants.py"
+  fetch_file "modules/utils.py" "$TMP/modules/utils.py"
+  fetch_file "modules/config.py" "$TMP/modules/config.py"
+  fetch_file "modules/profiler.py" "$TMP/modules/profiler.py"
+  fetch_file "modules/shell.py" "$TMP/modules/shell.py"
+  fetch_file "modules/ui.py" "$TMP/modules/ui.py"
+  fetch_file "modules/monitor.py" "$TMP/modules/monitor.py"
+  fetch_file "modules/storage.py" "$TMP/modules/storage.py"
+  fetch_file "modules/diag.py" "$TMP/modules/diag.py"
+  fetch_file "modules/app.py" "$TMP/modules/app.py"
+  fetch_file "modules/drivers.py" "$TMP/modules/drivers.py"
+
+  # drivers subpackage
+  fetch_file "modules/drivers/__init__.py" "$TMP/modules/drivers/__init__.py"
+  fetch_file "modules/drivers/router.py" "$TMP/modules/drivers/router.py"
+  fetch_file "modules/drivers/opkg.py" "$TMP/modules/drivers/opkg.py"
+  fetch_file "modules/drivers/hydra.py" "$TMP/modules/drivers/hydra.py"
+  fetch_file "modules/drivers/nfqws.py" "$TMP/modules/drivers/nfqws.py"
+  fetch_file "modules/drivers/awg.py" "$TMP/modules/drivers/awg.py"
 }
 
 cleanup() {
@@ -215,7 +228,8 @@ prompt_token_admin() {
 write_config_json() {
   CFG_DIR="$(pick_cfg_dir)"
   mkdir -p "$CFG_DIR"
-  cat > "$CFG_DIR/config.json" <<EOF
+  mkdir -p "$CFG_DIR/config"
+  cat > "$CFG_DIR/config/config.json" <<EOF
 {
   "bot_token": "${TG_TOKEN}",
   "admins": [${TG_ADMIN_ID}],
@@ -243,18 +257,11 @@ EOF
 
 deploy_bot_files() {
   SRC_DIR="$1"
-  CFG_DIR="$(pick_cfg_dir)"
-  mkdir -p "$CFG_DIR" /opt/etc/init.d
-
-  cp -f "$SRC_DIR/bot.py" "$CFG_DIR/bot.py"
-  chmod +x "$CFG_DIR/bot.py"
-
-  cp -f "$SRC_DIR/S99keenetic-tg-bot" /opt/etc/init.d/S99keenetic-tg-bot
-  chmod +x /opt/etc/init.d/S99keenetic-tg-bot
-
-  if [ "$CFG_DIR" = "/opt/etc/keenetic-tg-bot" ]; then
-    warn "$(t "Использую /opt/etc (на Keenetic /etc часто read-only)" "Using /opt/etc (on Keenetic /etc is often read-only)")"
+  # Use installer script from the downloaded repo snapshot
+  if [ ! -f "$SRC_DIR/install.sh" ]; then
+    die "install.sh not found in $SRC_DIR"
   fi
+  sh "$SRC_DIR/install.sh" >>"$LOGFILE" 2>&1 || die "install.sh failed"
 }
 
 install_bot() {
@@ -265,8 +272,9 @@ install_bot() {
 
   runq "bot stop" /opt/etc/init.d/S99keenetic-tg-bot stop || true
 
-  SRC_DIR="$(ensure_repo_files)"
+  ensure_repo_files
   deploy_bot_files "$SRC_DIR"
+  cleanup_installer
 
   CFG_DIR="$(pick_cfg_dir)"
   if [ "$RECONFIG" -eq 1 ] || [ ! -f "$CFG_DIR/config.json" ]; then
@@ -347,11 +355,11 @@ LOG="/opt/var/log/weekly-update.log"
 mkdir -p /opt/var/log
 
 REPO="Stak646/keenetic-TG-Bot"
-BRANCH="main"
+BRANCH="alfa"
 raw() { echo "https://raw.githubusercontent.com/${REPO}/${BRANCH}/$1"; }
 
 pick_cfg_dir() {
-  for d in /etc/keenetic-tg-bot /opt/etc/keenetic-tg-bot; do
+  for d in /opt/etc/keenetic-tg-bot /etc/keenetic-tg-bot; do
     mkdir -p "$d" >/dev/null 2>&1 || continue
     tfile="$d/.rwtest.$$"
     if ( : > "$tfile" ) 2>/dev/null; then
@@ -469,3 +477,9 @@ fi
 ok "$(t "Готово." "Done.")"
 ok "$(t "Лог установки: /opt/var/log/keenetic-tg-bot-install.log" "Install log: /opt/var/log/keenetic-tg-bot-install.log")"
 cleanup
+
+
+cleanup_installer() {
+  [ -n "$SRC_DIR" ] || return 0
+  rm -rf "$SRC_DIR" >/dev/null 2>&1 || true
+}

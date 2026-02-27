@@ -35,7 +35,7 @@ from telebot.types import (
 
 from .constants import *
 from .utils import *
-from .config import BotConfig, load_config
+from .config import BotConfig, load_config_or_exit
 from .shell import Shell
 from .drivers import RouterDriver, HydraRouteDriver, NfqwsDriver, AwgDriver
 from .ui import *
@@ -234,7 +234,7 @@ class App:
         def _cmd_diag_tg(m: Message) -> None:
             if not self.is_chat_allowed(m.chat.id, m.from_user.id):
                 return self._deny(m.chat.id)
-            from keenetic_tg_bot.diag import telegram_connectivity
+            from modules.diag import telegram_connectivity
             self.bot.send_message(m.chat.id, "⏳ Проверяю Telegram…")
             out = telegram_connectivity(self.sh)
             self.bot.send_message(m.chat.id, f"📡 <b>Telegram connectivity</b>\n{fmt_code(out)}", parse_mode="HTML")
@@ -499,7 +499,7 @@ class App:
 
     def _handle_diag_cb(self, chat_id: int, msg_id: int, data: str) -> None:
         # lazy import: keep core fast; only load when needed
-        from keenetic_tg_bot.diag import telegram_connectivity, dns_diagnostics, net_quick
+        from modules.diag import telegram_connectivity, dns_diagnostics, net_quick
 
         if data == "diag:tg":
             self.send_or_edit(chat_id, "⏳ Проверяю Telegram…", reply_markup=kb_diag(), message_id=msg_id)
@@ -1339,7 +1339,7 @@ def main() -> None:
             f"Config not found: {cfg_path}\n"
             f"Create it from config.example.json and set BOT_CONFIG or put it at {DEFAULT_CONFIG_PATH}"
         )
-    cfg = load_config(cfg_path)
+    cfg = load_config_or_exit()
     app = App(cfg)
     app.run()
 

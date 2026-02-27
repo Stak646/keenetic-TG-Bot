@@ -6,18 +6,18 @@ A Telegram bot running **on the router** (Entware `/opt`) to manage: Router / Hy
 Interactive (RU/EN language selection at start):
 ```sh
 opkg update && opkg install ca-certificates curl && \
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
 ```
 
 Non-interactive:
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | \
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | \
 sh -s -- --yes --bot --token 123456:ABCDEF --admin 599497434
 ```
 
 Verbose output:
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --debug
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --debug
 ```
 
 ## Get a bot token
@@ -67,7 +67,7 @@ Do not leak your bot token. If leaked, revoke it in BotFather (`/revoke`) and re
 
 ### Update an already installed bot (no module reinstall)
 ```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --update-bot --yes
 ```
 If you see **409 Conflict (getUpdates)**, multiple bot instances are running. Fix:
 ```sh
@@ -128,3 +128,14 @@ Install from `alfa`:
 ```
 curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
 ```
+
+
+## Files installed
+- Bot dir: `/opt/etc/keenetic-tg-bot/`
+  - `Main.py`
+  - `modules/` (drivers + other modules)
+  - `config/config.json`
+- Service: `/opt/etc/init.d/S99keenetic-tg-bot`
+
+
+> Note: This project was created with the help of AI.

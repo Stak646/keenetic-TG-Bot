@@ -4,7 +4,7 @@ from pathlib import Path
 
 # Config paths:
 # On Keenetic, /etc is often read-only, so default is /opt/etc.
-DEFAULT_CONFIG_PATH = "/opt/etc/keenetic-tg-bot/config.json"
+DEFAULT_CONFIG_PATH = "/opt/etc/keenetic-tg-bot/config/config.json"
 ALT_CONFIG_PATH = "/etc/keenetic-tg-bot/config.json"
 
 LOG_PATH = "/opt/var/log/keenetic-tg-bot.log"
