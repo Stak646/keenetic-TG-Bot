@@ -28,7 +28,12 @@ def telegram_connectivity(shell) -> str:
         rc2, route = shell.run(["ip", "route", "get", ip], timeout_sec=8)
         parts.append(f"route rc={rc2}")
         if route:
-            parts.append(route.strip())
+            r = route.strip()
+            parts.append(r)
+            mdev = re.search(r"\bdev\s+(\S+)", r)
+            dev = mdev.group(1) if mdev else ""
+            if dev and any(x in dev for x in ["opkgtun", "tun", "wg", "awg"]):
+                parts.append(f"Hint: api.telegram.org seems routed via tunnel dev={dev}. Consider excluding Telegram from tunnels / route it via WAN.")
         # Quick TLS head
         rc3, curl = shell.run(["curl", "-IksS", "--connect-timeout", "10", "--max-time", "20", f"https://{TG_HOST}/"], timeout_sec=25)
         parts.append(f"curl rc={rc3}")

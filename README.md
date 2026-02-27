@@ -101,3 +101,20 @@ Polling is now wrapped with exponential backoff to recover from transient discon
   - Clear bot log
 
 > Diagnostics moved into `keenetic_tg_bot/diag.py` and imported lazily.
+
+
+
+## Modular structure
+Code is split into modules under `keenetic_tg_bot/`:
+- `app.py` — main bot and handlers
+- `drivers.py` — Router/HydraRoute/NFQWS2/AWG drivers
+- `monitor.py` — monitoring (services/logs/resources/updates)
+- `ui.py` — keyboards and navigation
+- `shell.py` + `profiler.py` — command runner + slow-command profiler
+- `diag.py` — network/Telegram diagnostics (lazy import)
+- `storage.py` — /opt status/top/cleanup
+
+### New features
+- **🛠 Diagnostics**: checks route and reachability to `api.telegram.org` (DNS/route/curl)
+- **🐢 Slow cmds**: top slow commands (debugging performance)
+- **💾 Storage**: /opt status, top directories and safe cleanup (logs/cache/opkg lists)
