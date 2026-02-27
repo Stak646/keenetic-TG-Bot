@@ -86,3 +86,18 @@ Sub-menus added:
 Low disk space notifications for `/opt` are throttled (default: **once per 6 hours**), configurable in `config.json`:
 - `notify.disk_interval_sec`
 
+
+
+## Updating
+
+To **update bot files** (overwrite `bot.py` and init script), run:
+
+```sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes
+```
+
+To re-enter `bot_token` and `admin id`:
+
+```sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes --reconfig
+```

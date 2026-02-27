@@ -86,3 +86,18 @@ tail -n 200 /opt/var/log/keenetic-tg-bot.log
 Уведомление «мало места на /opt» теперь приходит **не чаще 1 раза в 6 часов** (настраивается в `config.json`):
 - `notify.disk_interval_sec`
 
+
+
+## Обновление
+
+Чтобы **обновить файлы бота** (перезаписать `bot.py` и init-скрипт), запусти:
+
+```sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes
+```
+
+Если нужно заново ввести `bot_token` и `admin id`:
+
+```sh
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/main/autoinstall.sh | sh -s -- --update-bot --yes --reconfig
+```
