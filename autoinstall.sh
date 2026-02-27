@@ -143,7 +143,18 @@ fetch_file() {
   [ -s "$dest" ] || { printf "download failed: %s\n" "$url" >&2; return 1; }
 }
 
-ensure_repo_filesensure_repo_files() {
+die() {
+  fail "$*"
+  cleanup
+  exit 1
+}
+
+cleanup_installer() {
+  [ -n "$SRC_DIR" ] || return 0
+  rm -rf "$SRC_DIR" >/dev/null 2>&1 || true
+}
+
+ensure_repo_files() {
   TMP="/opt/tmp/keenetic-tg-bot-installer"
   SRC_DIR="$TMP"
   rm -rf "$TMP" >/dev/null 2>&1 || true
@@ -477,9 +488,3 @@ fi
 ok "$(t "Готово." "Done.")"
 ok "$(t "Лог установки: /opt/var/log/keenetic-tg-bot-install.log" "Install log: /opt/var/log/keenetic-tg-bot-install.log")"
 cleanup
-
-
-cleanup_installer() {
-  [ -n "$SRC_DIR" ] || return 0
-  rm -rf "$SRC_DIR" >/dev/null 2>&1 || true
-}
