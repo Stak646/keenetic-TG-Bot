@@ -38,3 +38,4 @@ chmod +x /opt/etc/init.d/S99keenetic-tg-bot
 
 /opt/etc/init.d/S99keenetic-tg-bot restart || true
 /opt/etc/init.d/S99keenetic-tg-bot status || true
+echo "Logs: /opt/var/log/keenetic-tg-bot.log"

@@ -1238,7 +1238,9 @@ def kb_awg() -> InlineKeyboardMarkup:
     kb.row(
         InlineKeyboardButton("🌐 WebUI", callback_data="awg:web"),
         InlineKeyboardButton("🧵 wg show", callback_data="awg:wg"),
-        Inlin
+    )
+    kb.row(InlineKeyboardButton("⬅️ Back", callback_data="m:main"))
+    return kb
 
 def kb_awg_tunnel(idx: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup()
@@ -1254,14 +1256,6 @@ def kb_awg_tunnel(idx: int) -> InlineKeyboardMarkup:
     kb.row(
         InlineKeyboardButton("📋 Details", callback_data=f"awg:tunnel:{idx}"),
         InlineKeyboardButton("⬅️ Back", callback_data="awg:api:tunnels"),
-    )
-    kb.row(InlineKeyboardButton("🏠 Home", callback_data="m:main"))
-    return kb
-eKeyboardButton("⚙️ settings.json", callback_data="awg:file:settings.json"),
-    )
-    kb.row(
-        InlineKeyboardButton("⬆️ Обновить (opkg)", callback_data="awg:update?confirm=1"),
-        InlineKeyboardButton("🗑 Удалить", callback_data="awg:remove?confirm=1"),
     )
     kb.row(InlineKeyboardButton("🏠 Home", callback_data="m:main"))
     return kb
@@ -2067,20 +2061,15 @@ class App:
         mods.append("AWG ✅" if caps.get("awg") else "AWG ➖")
         mods.append("cron ✅" if caps.get("cron") else "cron ➖")
 
-        text = (
-            "🧰 <b>Keenetic Router Bot</b>
-"
-            f"📍 IP: <code>{self.router.lan_ip()}</code>
-"
-            f"⏱ Uptime: <code>{self.router.uptime()}</code>
-"
-            f"🧩 Модули: <code>{escape_html(' | '.join(mods))}</code>
-"
-            f"📦 Target packages: <code>{escape_html(versions)}</code>
-
-"
-            "Выберите раздел:"
-        )
+        text = "\n".join([
+            "🧰 <b>Keenetic Router Bot</b>",
+            f"📍 IP: <code>{self.router.lan_ip()}</code>",
+            f"⏱ Uptime: <code>{self.router.uptime()}</code>",
+            f"🧩 Модули: <code>{escape_html(' | '.join(mods))}</code>",
+            f"📦 Target packages: <code>{escape_html(versions)}</code>",
+            "",
+            "Выберите раздел:",
+        ])
         return text
 
 

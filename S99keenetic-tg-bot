@@ -1,4 +1,6 @@
 #!/bin/sh
+# Keenetic TG Bot init script (Entware)
+
 export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 CFG_DIR="/etc/keenetic-tg-bot"
@@ -29,11 +31,15 @@ start() {
   [ -f "$BOT" ] || { echo "Bot file not found: $BOT"; return 1; }
   [ -f "$CONFIG" ] || { echo "Config not found: $CONFIG"; return 1; }
 
-  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
-    echo "Already running"
-    return 0
+  if [ -f "$PIDFILE" ]; then
+    PID="$(cat "$PIDFILE" 2>/dev/null)"
+    if kill -0 "$PID" 2>/dev/null && pid_matches "$PID"; then
+      echo "Already running"
+      return 0
+    fi
   fi
 
+  echo "Starting keenetic-tg-bot..."
   if command -v nohup >/dev/null 2>&1; then
     nohup "$PY" "$BOT" >> "$LOGFILE" 2>&1 &
   elif command -v setsid >/dev/null 2>&1; then
@@ -43,7 +49,13 @@ start() {
   fi
 
   echo $! > "$PIDFILE"
-  echo "Started PID $(cat "$PIDFILE")"
+  sleep 0.2
+  PID="$(cat "$PIDFILE" 2>/dev/null)"
+  if ! kill -0 "$PID" 2>/dev/null || ! pid_matches "$PID"; then
+    echo "Start failed (process exited). See log: $LOGFILE"
+    return 1
+  fi
+  echo "Started PID $PID"
 }
 
 stop() {
@@ -59,12 +71,12 @@ stop() {
 
 status() {
   if [ -f "$PIDFILE" ]; then
-  PID="$(cat "$PIDFILE" 2>/dev/null)"
-  if kill -0 "$PID" 2>/dev/null && pid_matches "$PID"; then
-    echo "RUNNING PID $PID"
-    return 0
+    PID="$(cat "$PIDFILE" 2>/dev/null)"
+    if kill -0 "$PID" 2>/dev/null && pid_matches "$PID"; then
+      echo "RUNNING PID $PID"
+      return 0
+    fi
   fi
-fi
   echo "STOPPED"
   return 3
 }
