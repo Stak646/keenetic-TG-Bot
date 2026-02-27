@@ -149,6 +149,63 @@ class RouterDriver:
                 return "\n".join(lines)
         return "Недоступно (нет ndmc или команда не поддерживается)."
 
+    
+    def get_dhcp_clients(self) -> List[Dict[str, str]]:
+        """
+        Returns parsed DHCP bindings as list of dicts:
+        {ip, mac, name, iface, raw}
+        Best-effort parser for `ndmc -c show ip dhcp binding`.
+        """
+        if not which("ndmc"):
+            return []
+        rc, out = self.sh.run(["ndmc", "-c", "show", "ip", "dhcp", "binding"], timeout_sec=10)
+        if rc != 0 or not out:
+            return []
+        lines = [ln.rstrip() for ln in out.splitlines() if ln.strip()]
+        if not lines:
+            return []
+        # try table with header
+        header = lines[0].lower()
+        data_lines = lines[1:] if ("ip" in header and "mac" in header) else lines
+        items: List[Dict[str, str]] = []
+        for ln in data_lines:
+            # split by 2+ spaces first
+            cols = re.split(r"\s{2,}", ln.strip())
+            ip = mac = name = iface = ""
+            if len(cols) >= 2 and re.match(r"^\d+\.\d+\.\d+\.\d+$", cols[0]):
+                ip = cols[0]
+                mac = cols[1] if len(cols) > 1 else ""
+                # heuristic: remaining could be name/iface
+                rest = cols[2:] if len(cols) > 2 else []
+                if rest:
+                    # try to detect iface token
+                    if len(rest) >= 2 and any(x in rest[-1].lower() for x in ["wifi", "wlan", "wireless", "wl", "ssid"]):
+                        iface = rest[-1]
+                        name = " ".join(rest[:-1]).strip()
+                    else:
+                        name = " ".join(rest).strip()
+            else:
+                m = re.search(r"(\d+\.\d+\.\d+\.\d+).*?([0-9a-fA-F:]{17})", ln)
+                if m:
+                    ip = m.group(1)
+                    mac = m.group(2).lower()
+                    tail = ln[m.end():].strip()
+                    name = tail
+            if ip and mac:
+                items.append({"ip": ip, "mac": mac, "name": name, "iface": iface, "raw": ln})
+        return items
+
+    def split_clients_lan_wifi(self, items: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+        lan: List[Dict[str, str]] = []
+        wifi: List[Dict[str, str]] = []
+        for it in items:
+            s = (it.get("iface","") + " " + it.get("raw","") + " " + it.get("name","")).lower()
+            if any(k in s for k in ["wifi", "wlan", "wireless", "ssid", "wl"]):
+                wifi.append(it)
+            else:
+                lan.append(it)
+        return lan, wifi
+
     def export_running_config(self) -> Tuple[bool, str, Optional[Path]]:
         if which("ndmc"):
             rc, out = self.sh.run(["ndmc", "-c", "show", "running-config"], timeout_sec=20)
@@ -259,7 +316,7 @@ class HydraRouteDriver:
             rc, out = self.neo_cmd("status")
             parts.append(f"• Neo: {'✅ RUNNING' if rc == 0 else '⛔ STOPPED'}")
             if out:
-                parts.append(f"<code>{escape_html(out[:900])}</code>")
+                parts.append(f"{fmt_code(strip_ansi(out)[:3500])}")
             if ("hrweb" in self.opkg.target_versions()) or Path("/opt/share/hrweb").exists() or Path("/opt/etc/init.d/S50hrweb").exists():
                 parts.append(f"• HRweb: <code>http://{self.router.lan_ip()}:2000</code>")
             else:
@@ -268,7 +325,7 @@ class HydraRouteDriver:
             rc, out = self.classic_cmd("status")
             parts.append(f"• Classic: {'✅ RUNNING' if rc == 0 else '⛔ STOPPED'}")
             if out:
-                parts.append(f"<code>{escape_html(out[:900])}</code>")
+                parts.append(f"{fmt_code(strip_ansi(out)[:3500])}")
         else:
             parts.append("Не найдено (нет neo/hr).")
         # Версии пакетов
@@ -529,7 +586,7 @@ class NfqwsDriver:
         rc, out = self.init_action("status")
         parts.append(f"• Service: {'✅ RUNNING' if rc == 0 else '⛔ STOPPED'}")
         if out:
-            parts.append(f"<code>{escape_html(out[:900])}</code>")
+            parts.append(f"{fmt_code(strip_ansi(out)[:3500])}")
 
         # конфиг summary
         if NFQWS_CONF.exists():
@@ -539,7 +596,12 @@ class NfqwsDriver:
                 kv = parse_env_like(txt)
                 iface = kv.get("ISP_INTERFACE") or kv.get("ISP_IFACE") or kv.get("IFACE") or "?"
                 ipv6 = kv.get("IPV6_ENABLED") or kv.get("IPV6") or "?"
-                mode = kv.get("MODE") or kv.get("NFQWS_MODE") or "?"
+                mode = kv.get("MODE") or kv.get("NFQWS_MODE")
+                if not mode:
+                    m = re.search(r"--mode(?:=|\s+)(\S+)", txt)
+                    if m:
+                        mode = m.group(1)
+                mode = mode or "?"
                 parts.append(f"• iface: <code>{escape_html(str(iface))}</code>  ipv6: <code>{escape_html(str(ipv6))}</code>  mode: <code>{escape_html(str(mode))}</code>")
 
         parts.append(f"• Logs: <code>{NFQWS_LOG}</code>")
@@ -789,7 +851,7 @@ class AwgDriver:
         rc, out = self.init_action("status")
         parts.append(f"• Service: {'✅ RUNNING' if rc == 0 else '⛔ STOPPED'}")
         if out:
-            parts.append(f"<code>{escape_html(out[:900])}</code>")
+            parts.append(f"{fmt_code(strip_ansi(out)[:3500])}")
         if NFQWS_WEB_CONF.exists() or Path("/opt/share/nfqws-web").exists() or ("nfqws-keenetic-web" in self.opkg.target_versions()):
             parts.append(f"• WebUI: <code>{self.web_url()}</code>")
         else:

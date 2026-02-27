@@ -118,3 +118,13 @@ Polling is now wrapped with exponential backoff to recover from transient discon
 - **🛠 Диагностика**: проверка маршрута и доступа до `api.telegram.org` (DNS/route/curl)
 - **🐢 Slow cmds**: топ медленных команд (для отладки тормозов)
 - **💾 Storage**: статус /opt, топ каталогов и безопасная очистка (логи/кэш/списки opkg)
+
+
+### Branches
+- `alfa` — development / latest changes
+- `main` — stable (if/when merged)
+
+Install from `alfa`:
+```
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
+```

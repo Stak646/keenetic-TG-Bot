@@ -124,22 +124,110 @@ def kb_router() -> InlineKeyboardMarkup:
         InlineKeyboardButton("🌐 Интернет тест", callback_data="router:net"),
     )
     kb.row(
-        InlineKeyboardButton("👥 DHCP клиенты", callback_data="router:dhcp"),
+        InlineKeyboardButton("🌐 Network", callback_data="router:netmenu"),
+        InlineKeyboardButton("👥 DHCP", callback_data="router:dhcpmenu"),
+    )
+    kb.row(
+        InlineKeyboardButton("🧱 Firewall", callback_data="router:fwmenu"),
         InlineKeyboardButton("📤 Export config", callback_data="router:exportcfg"),
     )
+    kb.row(
+        InlineKeyboardButton("🔄 Reboot", callback_data="router:reboot?confirm=1"),
+    )
+    kb.row(InlineKeyboardButton("🏠 Home", callback_data="m:main"))
+    return kb
+
+def kb_router_net() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
     kb.row(
         InlineKeyboardButton("📡 ip addr", callback_data="router:ipaddr"),
         InlineKeyboardButton("🧭 ip route", callback_data="router:iproute"),
     )
     kb.row(
-        InlineKeyboardButton("🧱 iptables summary", callback_data="router:iptables_sum"),
-        InlineKeyboardButton("🧱 iptables raw", callback_data="router:iptables_raw"),
-        InlineKeyboardButton("🔄 Reboot", callback_data="router:reboot?confirm=1"),
+        InlineKeyboardButton("🌐 Интернет тест", callback_data="router:net"),
     )
     kb.row(
+        InlineKeyboardButton("⬅️ Back", callback_data="m:router"),
         InlineKeyboardButton("🏠 Home", callback_data="m:main"),
     )
     return kb
+
+
+def kb_router_fw() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
+    kb.row(
+        InlineKeyboardButton("mangle summary", callback_data="router:fw:sum:mangle"),
+        InlineKeyboardButton("mangle raw", callback_data="router:fw:raw:mangle"),
+    )
+    kb.row(
+        InlineKeyboardButton("filter summary", callback_data="router:fw:sum:filter"),
+        InlineKeyboardButton("filter raw", callback_data="router:fw:raw:filter"),
+    )
+    kb.row(
+        InlineKeyboardButton("nat summary", callback_data="router:fw:sum:nat"),
+        InlineKeyboardButton("nat raw", callback_data="router:fw:raw:nat"),
+    )
+    kb.row(
+        InlineKeyboardButton("⬅️ Back", callback_data="m:router"),
+        InlineKeyboardButton("🏠 Home", callback_data="m:main"),
+    )
+    return kb
+
+
+def kb_router_dhcp_menu() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
+    kb.row(
+        InlineKeyboardButton("LAN", callback_data="router:dhcp:list:lan:0"),
+        InlineKeyboardButton("WiFi", callback_data="router:dhcp:list:wifi:0"),
+    )
+    kb.row(
+        InlineKeyboardButton("All (raw)", callback_data="router:dhcp"),
+    )
+    kb.row(
+        InlineKeyboardButton("⬅️ Back", callback_data="m:router"),
+        InlineKeyboardButton("🏠 Home", callback_data="m:main"),
+    )
+    return kb
+
+
+def kb_router_dhcp_list(items: List[Dict[str, str]], kind: str, page: int, per_page: int = 10) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
+    total = len(items)
+    if total == 0:
+        kb.row(InlineKeyboardButton("⬅️ Back", callback_data="router:dhcpmenu"))
+        kb.row(InlineKeyboardButton("🏠 Home", callback_data="m:main"))
+        return kb
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = max(0, min(page, pages - 1))
+    start = page * per_page
+    end = min(total, start + per_page)
+    for i in range(start, end):
+        it = items[i]
+        ip = it.get("ip","")
+        name = it.get("name","") or it.get("mac","")
+        label = f"{ip} · {name}" if ip else name
+        kb.row(InlineKeyboardButton(label[:60], callback_data=f"router:dhcp:detail:{kind}:{i}:{page}"))
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"router:dhcp:list:{kind}:{page-1}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"router:dhcp:list:{kind}:{page+1}"))
+    if nav:
+        kb.row(*nav)
+    kb.row(
+        InlineKeyboardButton("⬅️ Back", callback_data="router:dhcpmenu"),
+        InlineKeyboardButton("🏠 Home", callback_data="m:main"),
+    )
+    return kb
+
+
+def kb_router_dhcp_detail(kind: str, page: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
+    kb.row(InlineKeyboardButton("⬅️ Back", callback_data=f"router:dhcp:list:{kind}:{page}"))
+    kb.row(InlineKeyboardButton("🏠 Home", callback_data="m:main"))
+    return kb
+
+
 
 
 def kb_hydra(variant: str) -> InlineKeyboardMarkup:

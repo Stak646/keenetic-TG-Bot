@@ -118,3 +118,13 @@ Code is split into modules under `keenetic_tg_bot/`:
 - **🛠 Diagnostics**: checks route and reachability to `api.telegram.org` (DNS/route/curl)
 - **🐢 Slow cmds**: top slow commands (debugging performance)
 - **💾 Storage**: /opt status, top directories and safe cleanup (logs/cache/opkg lists)
+
+
+### Branches
+- `alfa` — development / latest changes
+- `main` — stable (if/when merged)
+
+Install from `alfa`:
+```
+curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
+```

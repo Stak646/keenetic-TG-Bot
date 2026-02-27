@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Callable, Any
 
+import atexit
 import telebot
 import logging
 from telebot import apihelper
@@ -45,7 +46,7 @@ class App:
     def __init__(self, cfg: BotConfig):
         self.cfg = cfg
         self.bot = telebot.TeleBot(cfg.bot_token, parse_mode="HTML", threaded=True)
-        self.sh = Shell(timeout_sec=cfg.command_timeout_sec)
+        self.sh = Shell(timeout_sec=cfg.command_timeout_sec, debug_enabled=cfg.debug_enabled)
         self.sh.debug = cfg.debug_enabled
         self.sh.debug_output_max = cfg.debug_log_output_max
         self._cache: Dict[str, Tuple[float, Any]] = {}
@@ -56,6 +57,8 @@ class App:
         self.nfqws = NfqwsDriver(self.sh, self.opkg, self.router)
         self.awg = AwgDriver(self.sh, self.opkg, self.router)
 
+        self._cache = {}
+        self._cache_lock = threading.Lock()
         self.pending = PendingStore()
         self.awg_tunnel_cache: Dict[Tuple[int, int], Dict[str, Any]] = {}
 
@@ -83,13 +86,25 @@ class App:
         except Exception:
             pass
 
+
+    def _cached(self, key: str, ttl_sec: int, fn):
+        now = time.time()
+        with self._cache_lock:
+            v = self._cache.get(key)
+            if v and (now - v["ts"]) < ttl_sec:
+                return v["val"]
+        val = fn()
+        with self._cache_lock:
+            self._cache[key] = {"ts": now, "val": val}
+        return val
+
     # ---- UI helpers ----
     def snapshot(self) -> Dict[str, str]:
         # короткий статус для главного меню
         snap = {}
 
         # router internet
-        ok_net, _ = self.router.internet_check()
+        ok_net, _ = self._cached('snap:net', 10, lambda: self.router.internet_check())
         snap["router"] = "✅" if ok_net else "⚠️"
 
         # hydra
@@ -138,7 +153,7 @@ class App:
         caps["hydra_classic"] = self.hydra.is_classic_available()
         caps["hydra"] = caps["hydra_neo"] or caps["hydra_classic"]
 
-        vers = self.opkg.target_versions() if caps["opkg"] else {}
+        vers = self._cached('snap:vers', 60, lambda: self.opkg.target_versions()) if caps["opkg"] else {}
 
         # HRweb: пакет или типичные файлы
         caps["hrweb"] = ("hrweb" in vers) or Path("/opt/share/hrweb").exists() or Path("/opt/etc/init.d/S50hrweb").exists()
@@ -345,7 +360,7 @@ class App:
 
     # ---- Rendering ----
     def render_main(self) -> str:
-        vers = self.opkg.target_versions()
+        vers = self._cached('snap:vers', 60, lambda: self.opkg.target_versions())
         v_lines = []
         for p in TARGET_PKGS:
             if p in vers:
@@ -568,6 +583,74 @@ class App:
                 message_id=msg_id,
             )
             return
+
+        if data == "router:netmenu":
+            self.send_or_edit(chat_id, "🌐 <b>Router / Network</b>", reply_markup=kb_router_net(), message_id=msg_id)
+            return
+        if data == "router:fwmenu":
+            self.send_or_edit(chat_id, "🧱 <b>Router / Firewall</b>", reply_markup=kb_router_fw(), message_id=msg_id)
+            return
+        if data == "router:dhcpmenu":
+            self.send_or_edit(chat_id, "👥 <b>DHCP clients</b>", reply_markup=kb_router_dhcp_menu(), message_id=msg_id)
+            return
+
+        
+        if data.startswith("router:dhcp:list:"):
+            # router:dhcp:list:<kind>:<page>
+            _, _, _, kind, page_s = (data.split(":", 4) + ["lan", "0"])[0:5]
+            try:
+                page = int(page_s)
+            except Exception:
+                page = 0
+            # fetch/parse
+            all_items = self._cached("router:dhcp:parsed", 15, lambda: self.router.get_dhcp_clients())
+            lan, wifi = self.router.split_clients_lan_wifi(all_items) if hasattr(self.router, "split_clients_lan_wifi") else (all_items, [])
+            items = lan if kind == "lan" else wifi if kind == "wifi" else all_items
+            self.send_or_edit(chat_id, "⏳ Загружаю…", reply_markup=kb_router_dhcp_menu(), message_id=msg_id)
+            kb = kb_router_dhcp_list(items, kind=kind, page=page, per_page=10)
+            title = "LAN" if kind == "lan" else "WiFi" if kind == "wifi" else "All"
+            self.send_or_edit(chat_id, f"👥 <b>DHCP clients: {title}</b>", reply_markup=kb, message_id=msg_id)
+            return
+
+        if data.startswith("router:dhcp:detail:"):
+            # router:dhcp:detail:<kind>:<idx>:<page>
+            parts = data.split(":")
+            kind = parts[3] if len(parts) > 3 else "lan"
+            idx = int(parts[4]) if len(parts) > 4 else 0
+            page = int(parts[5]) if len(parts) > 5 else 0
+            all_items = self._cached("router:dhcp:parsed", 15, lambda: self.router.get_dhcp_clients())
+            lan, wifi = self.router.split_clients_lan_wifi(all_items) if hasattr(self.router, "split_clients_lan_wifi") else (all_items, [])
+            items = lan if kind == "lan" else wifi if kind == "wifi" else all_items
+            if idx < 0 or idx >= len(items):
+                self.send_or_edit(chat_id, "Клиент не найден.", reply_markup=kb_router_dhcp_menu(), message_id=msg_id)
+                return
+            it = items[idx]
+            ip = it.get("ip","")
+            mac = it.get("mac","")
+            name = it.get("name","")
+            iface = it.get("iface","")
+            raw = it.get("raw","")
+            # extra: ip neigh
+            neigh = ""
+            if ip:
+                _, neigh = self.sh.run(["ip", "neigh", "show", ip], timeout_sec=5)
+            txt = "\n".join([
+                "👤 <b>DHCP client</b>",
+                f"IP: <code>{escape_html(ip)}</code>",
+                f"MAC: <code>{escape_html(mac)}</code>",
+                f"Name: <code>{escape_html(name)}</code>" if name else "Name: —",
+                f"Iface: <code>{escape_html(iface)}</code>" if iface else "Iface: —",
+                "",
+                "<b>Raw:</b>",
+                fmt_code(raw),
+                "",
+                "<b>ip neigh:</b>",
+                fmt_code(neigh or "—"),
+            ])
+            kb = kb_router_dhcp_detail(kind=kind, page=page)
+            self.send_or_edit(chat_id, txt, reply_markup=kb, message_id=msg_id)
+            return
+
         if data == "router:dhcp":
             self.send_or_edit(chat_id, "⏳ Загружаю DHCP…", reply_markup=kb_router(), message_id=msg_id)
             txt = self._cached("router:dhcp", 10, lambda: self.router.show_dhcp_clients(limit=250)[0:8000])
@@ -595,6 +678,25 @@ class App:
             self.send_or_edit(chat_id, f"🧭 <b>ip route -4</b>\n{fmt_code(fmt_ip_route(out))}", reply_markup=kb_router(), message_id=msg_id)
 
             return
+        if data.startswith("router:fw:"):
+            # router:fw:sum:<table> or router:fw:raw:<table>
+            parts = data.split(":")
+            if len(parts) >= 4:
+                action = parts[2]
+                table = parts[3]
+                if not which("iptables"):
+                    self.send_or_edit(chat_id, "iptables не найден.", reply_markup=kb_router_fw(), message_id=msg_id)
+                    return
+                self.send_or_edit(chat_id, "⏳ Выполняю…", reply_markup=kb_router_fw(), message_id=msg_id)
+                out = self._cached(f"router:iptables:{table}", 20, lambda: self.sh.run(["iptables", "-t", table, "-S"], timeout_sec=15)[1])
+                if action == "sum":
+                    self.send_or_edit(chat_id, f"🧱 <b>iptables {table} summary</b>\n{fmt_code(summarize_iptables(out))}", reply_markup=kb_router_fw(), message_id=msg_id)
+                else:
+                    self.send_or_edit(chat_id, f"🧱 <b>iptables -t {table} -S</b>\n{fmt_code(out)}", reply_markup=kb_router_fw(), message_id=msg_id)
+                return
+            self.send_or_edit(chat_id, "Неизвестная команда.", reply_markup=kb_router_fw(), message_id=msg_id)
+            return
+
         if data == "router:iptables_sum":
             if which("iptables"):
                 out = self._cached("router:iptables:mangle", 30, lambda: self.sh.run(["iptables", "-t", "mangle", "-S"], timeout_sec=15)[1])
@@ -1088,7 +1190,7 @@ class App:
                 self.send_or_edit(chat_id, f"⬆️ <b>list-upgradable</b>\n<code>{escape_html(out[:3500] or 'нет обновлений')}</code>", reply_markup=kb_opkg(), message_id=msg_id)
             return
         if data == "opkg:versions":
-            vers = self.opkg.target_versions()
+            vers = self._cached('snap:vers', 60, lambda: self.opkg.target_versions())
             if not vers:
                 self.send_or_edit(chat_id, "Не удалось получить версии (opkg).", reply_markup=kb_opkg(), message_id=msg_id)
             else:
@@ -1144,8 +1246,42 @@ class App:
             return
         self.send_or_edit(chat_id, f"📜 <b>{escape_html(p.name)}</b>\n<code>{escape_html(txt[-3500:])}</code>", reply_markup=kb_logs(), message_id=msg_id)
 
+
+    def _acquire_instance_lock(self) -> bool:
+        """
+        Prevent 2 instances running simultaneously (fixes Telegram 409 conflicts).
+        Uses an atomic mkdir lock under /opt/var/run.
+        """
+        lock_dir = Path("/opt/var/run/keenetic-tg-bot.lock")
+        pid_path = lock_dir / "pid"
+        lock_dir.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            lock_dir.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            try:
+                pid = int(pid_path.read_text().strip())
+                os.kill(pid, 0)
+                log_line(f"instance lock exists, pid alive: {pid}")
+                return False
+            except Exception:
+                # stale lock
+                try:
+                    shutil.rmtree(lock_dir, ignore_errors=True)
+                    lock_dir.mkdir(parents=True, exist_ok=False)
+                except Exception as e:
+                    log_line(f"cannot acquire lock: {e}")
+                    return False
+        try:
+            pid_path.write_text(str(os.getpid()), encoding="utf-8")
+        except Exception:
+            pass
+        atexit.register(lambda: shutil.rmtree(lock_dir, ignore_errors=True))
+        return True
+
     def run(self) -> None:
         log_line("bot starting")
+        if not self._acquire_instance_lock():
+            return
         if self.monitor:
             try:
                 self.monitor.start()

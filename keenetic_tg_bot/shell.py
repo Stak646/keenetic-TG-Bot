@@ -12,8 +12,9 @@ from .profiler import CommandProfiler
 
 class Shell:
 
-    def __init__(self, timeout_sec: int = 30):
+    def __init__(self, timeout_sec: int = 30, debug_enabled: bool = False):
         self.timeout_sec = timeout_sec
+        self.debug_enabled = bool(debug_enabled)
         self.debug = False
         self.debug_output_max = 5000
         self.env = os.environ.copy()
@@ -42,6 +43,8 @@ class Shell:
                 if out:
                     log_line("DEBUG out:\n" + out[: getattr(self, 'debug_output_max', 5000)])
             self.profiler.record(cmd, dt, rc)
+            if self.debug_enabled:
+                log_line(f"cmd dt={dt:.2f}s rc={rc} :: {cmd}")
             return rc, out
         except subprocess.TimeoutExpired as e:
             out = strip_ansi((e.stdout or "")).strip() if e.stdout else ""
