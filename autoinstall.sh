@@ -1,3 +1,36 @@
+# Detect whether sleep supports fractional seconds (BusyBox variants differ).
+SLEEP_FRACTIONAL=1
+if ! (sleep 0.1 >/dev/null 2>&1); then
+  SLEEP_FRACTIONAL=0
+fi
+
+sleep_short() {
+  # sleep_short <seconds_float> <microseconds_int_fallback>
+  sec="$1"
+  usec="$2"
+  if [ "$SLEEP_FRACTIONAL" -eq 1 ]; then
+    sleep "$sec" >/dev/null 2>&1 || sleep 1
+    return 0
+  fi
+  if command -v usleep >/dev/null 2>&1; then
+    usleep "$usec" >/dev/null 2>&1 || sleep 1
+    return 0
+  fi
+  # last resort (coarser spinner)
+  sleep 1
+}
+
+spinner_wait() {
+  pid="$1"; title="$2"
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    for c in '-' '\' '|' '/'; do
+      printf "
+%s %s" "$title" "$c" >&2
+      sleep_short 0.12 120000
+      kill -0 "$pid" >/dev/null 2>&1 || break
+    done
+  done
+}
 #!/bin/sh
 # Keenetic TG Bot installer (Entware)
 # Safe for BusyBox ash.
@@ -549,6 +582,54 @@ prompt_token_admin() {
   fi
 }
 
+
+check_and_offer_components() {
+  # Optional components to manage (best-effort). This is separate from bot deps.
+  # Format: label|pkg_list(space separated)
+  comps="
+AWG|awg-manager
+HydraRoute Core|hrneo
+HydraRoute Web|hrweb
+NFQWS2 Core|nfqws2
+NFQWS2 Web|nfqws-keenetic-web
+"
+  missing=""
+  unavail=""
+  echo "$comps" | while IFS='|' read -r label pkgs; do
+    [ -z "$label" ] && continue
+    for p in $pkgs; do
+      if opkg_pkg_installed "$p"; then
+        dbg "Component present: $label ($p)"
+        continue 2
+      fi
+    done
+    # not installed; check availability of at least one package
+    avail=0
+    for p in $pkgs; do
+      if opkg_pkg_available "$p"; then
+        avail=1
+        break
+      fi
+    done
+    if [ "$avail" -eq 1 ]; then
+      echo "$label|$pkgs"
+    else
+      echo "UNAVAIL|$label|$pkgs" >&2
+    fi
+  done >"$TMP_DIR/.components_missing" 2>/dev/null || true
+
+  if [ -f "$TMP_DIR/.components_missing" ] && [ -s "$TMP_DIR/.components_missing" ]; then
+    if confirm "$(say deps_install)? (AWG/Hydra/NFQWS2)" "Y"; then
+      while IFS='|' read -r label pkgs; do
+        [ -z "$label" ] && continue
+        run_step "Install $label" opkg_install "$pkgs"
+      done <"$TMP_DIR/.components_missing"
+    else
+      log "Optional components installation skipped"
+    fi
+  fi
+}
+
 main() {
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -582,6 +663,7 @@ main() {
   fi
 
   check_and_install_deps
+  check_and_offer_components
 
   # Install/reinstall bot?
   if [ -d "$INSTALL_DIR" ]; then

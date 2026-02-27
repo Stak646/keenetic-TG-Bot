@@ -19,12 +19,15 @@ class HydraInfo:
 class HydraRouteDriver(DriverBase):
     def __init__(self, sh):
         super().__init__(sh)
-        self.neo_svc = InitServiceDriver(sh, script_name_patterns=[r"hrneo"], pkg_names=["hrneo"])
-        self.web_svc = InitServiceDriver(sh, script_name_patterns=[r"hrweb"], pkg_names=["hrweb"])
+        self.neo_svc = InitServiceDriver(sh, script_name_patterns=[r"hrneo", r"hydra.*neo", r"hydra.*route", r"hydra"], pkg_names=["hrneo", "hydraroute", "hydra-route", "hydra-route-neo"])
+        self.web_svc = InitServiceDriver(sh, script_name_patterns=[r"hrweb", r"hydra.*web", r"hr.*web"], pkg_names=["hrweb", "hydraweb", "hydra-route-web"])
 
     def is_installed(self) -> bool:
-        # installed if package or init script exists
-        return self.sh.run("opkg status hrneo >/dev/null 2>&1 && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes" or self.neo_svc.status().installed
+        # installed if any known package is present OR init script exists
+        cmd = """(for p in hrneo hydraroute hydra-route hydra-route-neo; do opkg status $p >/dev/null 2>&1 && exit 0; done; exit 1)"""
+        if self.sh.run(cmd + " && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes":
+            return True
+        return self.neo_svc.status().installed or self.web_svc.status().installed
 
     def overview(self, default_port: int = 2000) -> HydraInfo:
         neo = self.neo_svc.status()

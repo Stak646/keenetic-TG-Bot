@@ -20,11 +20,14 @@ class NfqwsInfo:
 class NfqwsDriver(DriverBase):
     def __init__(self, sh):
         super().__init__(sh)
-        self.core_svc = InitServiceDriver(sh, script_name_patterns=[r"nfqws2", r"nfqws"], pkg_names=["nfqws2"])
-        self.web_svc = InitServiceDriver(sh, script_name_patterns=[r"nfqws.*web", r"nfqws-keenetic-web"], pkg_names=["nfqws-keenetic-web", "nfqws-web"])
+        self.core_svc = InitServiceDriver(sh, script_name_patterns=[r"nfqws2", r"nfqws", r"zapret", r"nfq.*ws"], pkg_names=["nfqws2", "nfqws", "nfqws-keenetic", "zapret"])
+        self.web_svc = InitServiceDriver(sh, script_name_patterns=[r"nfqws.*web", r"nfqws-keenetic-web", r"nfqwsweb", r"zapret.*web"], pkg_names=["nfqws-keenetic-web", "nfqws-web", "nfqws-webui", "zapret-web"])
         # mode detection is best-effort
     def is_installed(self) -> bool:
-        return self.sh.run("opkg status nfqws2 >/dev/null 2>&1 && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes" or self.core_svc.status().installed
+        cmd = """(for p in nfqws2 nfqws nfqws-keenetic zapret; do opkg status $p >/dev/null 2>&1 && exit 0; done; exit 1)"""
+        if self.sh.run(cmd + " && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes":
+            return True
+        return self.core_svc.status().installed or self.web_svc.status().installed
 
     def detect_mode(self) -> str:
         # Try config file patterns
