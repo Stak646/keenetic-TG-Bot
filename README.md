@@ -81,3 +81,7 @@ ps w | grep -F /opt/etc/keenetic-tg-bot/bot.py | grep -v grep
 - `/debug_on` — enable verbose command + timing logs
 - `/debug_off` — disable
 Log: `/opt/var/log/keenetic-tg-bot.log`
+
+
+### Network stability
+Polling is now wrapped with exponential backoff to recover from transient disconnects (RemoteDisconnected/timeouts).

@@ -249,7 +249,7 @@ class Shell:
     def sh(self, cmdline: str, timeout_sec: Optional[int] = None) -> Tuple[int, str]:
         # Используем /bin/sh -lc для простых пайпов/грепа в диагностике.
         # ВНИМАНИЕ: НЕ передавать сюда пользовательский ввод!
-        return self.run(["/bin/sh", "-lc", cmdline], timeout_sec=timeout_sec)
+        return self.run(["/bin/sh", "-c", cmdline], timeout_sec=timeout_sec)
 
     def read_file(self, path: Path, max_bytes: int = 200_000) -> Tuple[bool, str]:
         try:
@@ -1699,9 +1699,23 @@ class Monitor(threading.Thread):
         if not self.cfg.notify_on_log_errors:
             return
         err_re = re.compile(r"\b(ERROR|FATAL|PANIC)\b", re.I)
-        for p, tag in [(Path(LOG_PATH), "bot"), (NFQWS_LOG, "nfqws2"), (HR_NEO_LOG_DEFAULT, "hrneo")]:
-            hit = self._tail_new_errors(p, err_re)
-            if hit and self._cooldown_ok(f"log:{tag}"):
+
+        checks = [
+            (Path(LOG_PATH), "bot"),
+            (NFQWS_LOG, "nfqws2"),
+            (HR_NEO_LOG_DEFAULT, "hrneo"),
+        ]
+
+        for p, tag in checks:
+            try:
+                hit = self._tail_new_errors(p, err_re)
+                if not hit:
+                    continue
+
+                if not self._cooldown_ok(f"log:{tag}"):
+                    continue
+
+                # always defined, even if code shifts
                 restart_cb = None
                 logs_cb = "logs:bot"
                 if tag == "nfqws2":
@@ -1710,15 +1724,19 @@ class Monitor(threading.Thread):
                 elif tag == "hrneo":
                     restart_cb = "hydra:restart"
                     logs_cb = "logs:hrneo"
+
                 self._notify_admins(
                     self._fmt_notice(
                         title=f"🧾⚠️ <b>Ошибки в логах</b> (<code>{tag}</code>)",
                         summary_lines=["Найдены строки с ERROR/FATAL/PANIC (показан хвост)."],
                         details=hit,
-                        hint="Открой /menu → Логи и проверь подробности; при необходимости Restart сервиса"
+                        hint="Открой /menu → Логи и проверь подробности; при необходимости сделай Restart сервиса."
                     ),
                     reply_markup=kb_notice_actions(primary_cb="m:logs", restart_cb=restart_cb, logs_cb=logs_cb)
                 )
+            except Exception as e:
+                log_line(f"check_logs error ({tag}): {e}")
+
 
 
     def _handle_install_cb(self, chat_id: int, msg_id: int, data: str) -> None:
@@ -2869,9 +2887,31 @@ class App:
         except Exception:
             pass
 
-        self.bot.infinity_polling(timeout=30, long_polling_timeout=30, interval=self.cfg.poll_interval_sec, skip_pending=True, allowed_updates=["message","callback_query"])
+        backoff = 5
 
 
+        while True:
+
+
+            try:
+
+
+                self.bot.infinity_polling(timeout=30, long_polling_timeout=30, interval=self.cfg.poll_interval_sec, skip_pending=True, allowed_updates=["message","callback_query"])
+
+
+                backoff = 5
+
+
+            except Exception as e:
+
+
+                log_line(f"polling error: {e}")
+
+
+                time.sleep(backoff)
+
+
+                backoff = min(backoff * 2, 60)
 def main() -> None:
     cfg_path = os.getenv("BOT_CONFIG", DEFAULT_CONFIG_PATH)
     if not os.path.exists(cfg_path):
