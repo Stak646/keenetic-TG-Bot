@@ -41,20 +41,6 @@ Telegram‑бот для роутеров Keenetic (Entware): управлени
 
 ### One‑liner (alfa)
 
-Интерактивная установка (без параметров):
-
-```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh
-```
-
-Debug-режим установщика:
-
-```sh
-curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --debug
-```
-
-Неинтерактивно (для скриптов):
-
 ```sh
 curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinstall.sh | sh -s -- --yes --lang ru --token "YOUR_BOT_TOKEN" --admin 123456789
 ```
@@ -91,7 +77,6 @@ curl -Ls https://raw.githubusercontent.com/Stak646/keenetic-TG-Bot/alfa/autoinst
 
 - `/opt/var/log/keenetic-tg-bot.log` — основной лог (rotating)
 - `/opt/var/log/keenetic-tg-bot-console.log` — вывод демона (stdout/stderr)
-- `/opt/var/log/keenetic-tg-bot-install.log` — лог установщика
 
 ## Важные примечания
 

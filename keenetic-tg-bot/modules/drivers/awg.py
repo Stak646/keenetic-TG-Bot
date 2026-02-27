@@ -1,7 +1,6 @@
 
 from __future__ import annotations
 
-import os
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -60,25 +59,10 @@ class AwgDriver(DriverBase):
             return AwgApiResult(ok=False, status=0, data=None, err=str(e))
 
     def detect(self) -> bool:
-        # Package presence (different names in forks)
-        cmd = """(for p in awg-manager awg amnezia-wg amneziawg; do opkg status $p >/dev/null 2>&1 && exit 0; done; exit 1)"""
-        if self.sh.run(cmd + " && echo yes || echo no", timeout_sec=5, cache_ttl_sec=30).out.strip() == "yes":
+        # init script or port reachable
+        if self.sh.run("opkg status awg-manager >/dev/null 2>&1 && echo yes || echo no", timeout_sec=5, cache_ttl_sec=30).out.strip() == "yes":
             return True
-        # Init scripts (some installs don't ship opkg metadata)
-        init_dir = "/opt/etc/init.d"
-        if os.path.isdir(init_dir):
-            try:
-                for n in os.listdir(init_dir):
-                    nn = n.lower()
-                    if "awg" in nn or "amnez" in nn:
-                        return True
-            except Exception:
-                pass
-        # Binaries
-        for b in ("/opt/sbin/awg-manager", "/opt/sbin/awg", "/opt/bin/awg-manager", "/opt/bin/awg"):
-            if os.path.exists(b):
-                return True
-        # Try API
+        # Try api
         res = self._get("/api/version")
         return res.ok
 

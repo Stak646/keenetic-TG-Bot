@@ -29,6 +29,6 @@
     "web_port": 2000
   },
   "nfqws": {
-    "web_port": 80
+    "web_port": 90
   }
 }

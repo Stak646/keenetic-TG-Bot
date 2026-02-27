@@ -39,6 +39,7 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "home.components": "📦 Components",
         "home.opkg": "🧩 OPKG",
         "home.hydra": "🧬 HydraRoute",
+        "home.magitrickle": "🪄 MagiTrickle",
         "home.nfqws": "🧱 NFQWS2",
         "home.awg": "🧷 AWG Manager",
         "home.speed": "🚀 Speed test",
@@ -95,6 +96,13 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "hydra.webui": "Web UI",
         "hydra.diag": "Diagnostics",
         "hydra.not_installed": "HydraRoute is not installed.",
+        "hydra.ignored_by_magitrickle": "HydraRoute is ignored because MagiTrickle is installed.",
+        "hydra.update_only": "Detected an outdated HydraRoute version (Classic/Relic). Only update to Neo is supported.",
+
+        # MagiTrickle
+        "magitrickle.header": "🪄 <b>MagiTrickle</b>",
+        "magitrickle.not_installed": "MagiTrickle is not installed.",
+        "magitrickle.ignored_by_hydra": "MagiTrickle is ignored because HydraRoute is installed.",
 
         # NFQWS2
         "nfqws.header": "🧱 <b>NFQWS2</b>",
@@ -164,6 +172,7 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "home.components": "📦 Компоненты",
         "home.opkg": "🧩 OPKG",
         "home.hydra": "🧬 HydraRoute",
+        "home.magitrickle": "🪄 MagiTrickle",
         "home.nfqws": "🧱 NFQWS2",
         "home.awg": "🧷 AWG Manager",
         "home.speed": "🚀 Speed test",
@@ -220,6 +229,13 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "hydra.webui": "Web UI",
         "hydra.diag": "Диагностика",
         "hydra.not_installed": "HydraRoute не установлен.",
+        "hydra.ignored_by_magitrickle": "HydraRoute игнорируется, потому что установлен MagiTrickle.",
+        "hydra.update_only": "Обнаружена устаревшая версия HydraRoute (Classic/Relic). Поддерживается только обновление до Neo.",
+
+        # MagiTrickle
+        "magitrickle.header": "🪄 <b>MagiTrickle</b>",
+        "magitrickle.not_installed": "MagiTrickle не установлен.",
+        "magitrickle.ignored_by_hydra": "MagiTrickle игнорируется, потому что установлен HydraRoute.",
 
         # NFQWS2
         "nfqws.header": "🧱 <b>NFQWS2</b>",

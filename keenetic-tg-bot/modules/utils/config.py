@@ -54,7 +54,7 @@ class AppConfig:
     hydra_web_port: int = 2000
 
     # NFQWS web
-    nfqws_web_port: int = 80  # best-effort, may differ
+    nfqws_web_port: int = 90  # nfqws-keenetic-web default
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "AppConfig":

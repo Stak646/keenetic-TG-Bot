@@ -28,6 +28,14 @@ class Shell:
         self._cache: Dict[str, Tuple[float, ShellResult]] = {}
         self.log = get_logger()
 
+        # Init scripts on Keenetic/Entware may run with a minimal PATH that doesn't
+        # include /opt/bin. Ensure opkg and other Entware binaries are always found.
+        base_path = os.environ.get("PATH", "")
+        if "/opt/bin" not in base_path.split(":"):
+            base_path = "/opt/bin:/opt/sbin:" + base_path
+        self._base_env: Dict[str, str] = dict(os.environ)
+        self._base_env["PATH"] = base_path
+
     def _key(self, cmd: Union[str, List[str]]) -> str:
         if isinstance(cmd, list):
             return "\x00".join(cmd)
@@ -78,12 +86,15 @@ class Shell:
             self.log.debug("[sh] %s", printable)
 
         try:
+            run_env = dict(self._base_env)
+            if env:
+                run_env.update(env)
             p = subprocess.run(
                 popen_args,
                 capture_output=True,
                 text=True,
                 timeout=to,
-                env=env,
+                env=run_env,
                 cwd=cwd,
             )
             out = (p.stdout or "").strip()

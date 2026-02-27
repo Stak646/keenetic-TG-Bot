@@ -20,14 +20,27 @@ class NfqwsInfo:
 class NfqwsDriver(DriverBase):
     def __init__(self, sh):
         super().__init__(sh)
-        self.core_svc = InitServiceDriver(sh, script_name_patterns=[r"nfqws2", r"nfqws", r"zapret", r"nfq.*ws"], pkg_names=["nfqws2", "nfqws", "nfqws-keenetic", "zapret"])
-        self.web_svc = InitServiceDriver(sh, script_name_patterns=[r"nfqws.*web", r"nfqws-keenetic-web", r"nfqwsweb", r"zapret.*web"], pkg_names=["nfqws-keenetic-web", "nfqws-web", "nfqws-webui", "zapret-web"])
+        # Official package names:
+        # - core: nfqws2-keenetic
+        # - web:  nfqws-keenetic-web (separate package/repo)
+        self.core_svc = InitServiceDriver(
+            sh,
+            script_name_patterns=[r"nfqws2", r"nfqws"],
+            pkg_names=["nfqws2-keenetic", "nfqws2"],
+        )
+        self.web_svc = InitServiceDriver(
+            sh,
+            script_name_patterns=[r"nfqws.*web", r"nfqws-keenetic-web"],
+            pkg_names=["nfqws-keenetic-web"],
+        )
         # mode detection is best-effort
     def is_installed(self) -> bool:
-        cmd = """(for p in nfqws2 nfqws nfqws-keenetic zapret; do opkg status $p >/dev/null 2>&1 && exit 0; done; exit 1)"""
-        if self.sh.run(cmd + " && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes":
+        # Prefer official package name, but keep a fallback for older forks.
+        ok = self.sh.run("opkg status nfqws2-keenetic >/dev/null 2>&1 && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes"
+        if ok:
             return True
-        return self.core_svc.status().installed or self.web_svc.status().installed
+        ok2 = self.sh.run("opkg status nfqws2 >/dev/null 2>&1 && echo yes || echo no", timeout_sec=5, cache_ttl_sec=10).out.strip() == "yes"
+        return ok2 or self.core_svc.status().installed
 
     def detect_mode(self) -> str:
         # Try config file patterns
@@ -48,12 +61,12 @@ class NfqwsDriver(DriverBase):
             return "auto"
         return "unknown"
 
-    def overview(self, default_port: int = 80) -> NfqwsInfo:
+    def overview(self, default_port: int = 90) -> NfqwsInfo:
         core = self.core_svc.status()
         web = self.web_svc.status()
         mode = self.detect_mode()
         ip = guess_router_ipv4(self.sh) or "192.168.0.1"
-        url = f"http://{ip}:{default_port}"
+        url = f"http://{ip}:{default_port}" if web.installed else None
         return NfqwsInfo(core=core, web=web, mode=mode, web_url=url)
 
     def start(self) -> ServiceStatus:

@@ -62,3 +62,18 @@ class OpkgDriver(DriverBase):
         res = self.sh.run(f"opkg status {pkg} 2>/dev/null | awk -F': ' '/^Version: /{{print $2; exit}}'", timeout_sec=10, cache_ttl_sec=5)
         v = res.out.strip()
         return v or None
+
+    def pkg_available_version(self, pkg: str) -> Optional[str]:
+        res = self.sh.run(f"opkg info {pkg} 2>/dev/null | awk -F': ' '/^Version: /{{print $2; exit}}'", timeout_sec=10, cache_ttl_sec=0)
+        v = res.out.strip()
+        return v or None
+
+    def list_upgradable(self) -> List[str]:
+        res = self.sh.run("opkg list-upgradable 2>/dev/null | awk '{print $1}'", timeout_sec=30, cache_ttl_sec=0)
+        if res.rc != 0:
+            return []
+        return [x.strip() for x in res.out.splitlines() if x.strip()]
+
+    def pkg_upgradable(self, pkg: str) -> bool:
+        upg = self.list_upgradable()
+        return pkg in set(upg)

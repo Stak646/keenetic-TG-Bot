@@ -28,7 +28,8 @@ class InitServiceDriver(DriverBase):
         except Exception:
             return None
         for pat in self.script_name_patterns:
-            rx = re.compile(pat)
+            # Some packages use mixed-case names depending on build scripts.
+            rx = re.compile(pat, flags=re.IGNORECASE)
             for n in sorted(names):
                 if rx.search(n):
                     return os.path.join(init_dir, n)

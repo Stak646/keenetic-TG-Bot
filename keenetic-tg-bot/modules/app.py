@@ -148,10 +148,18 @@ class App:
 
     def home_screen(self) -> Screen:
         i18n = self.i18n
+        # If MagiTrickle is installed, HydraRoute should be ignored and vice versa.
+        # Home shows the active one.
+        show_magi = False
+        try:
+            comp = self.components.get("mt")
+            show_magi = bool(comp and comp.is_available())
+        except Exception:
+            show_magi = False
         rows = [
             [btn(i18n.t("home.router"), "r|m"), btn(i18n.t("home.components"), "c|m")],
             [btn(i18n.t("home.opkg"), "o|m"), btn(i18n.t("home.settings"), "st|m")],
-            [btn(i18n.t("home.hydra"), "hy|m"), btn(i18n.t("home.nfqws"), "nq|m")],
+            [btn(i18n.t("home.magitrickle"), "mt|m") if show_magi else btn(i18n.t("home.hydra"), "hy|m"), btn(i18n.t("home.nfqws"), "nq|m")],
             [btn(i18n.t("home.awg"), "aw|m"), btn(i18n.t("home.speed"), "sp|m")],
         ]
         return Screen(text=f"{i18n.t('home.header')}\n\n{i18n.t('home.subtitle')}", kb=kb(rows))

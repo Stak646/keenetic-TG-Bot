@@ -15,6 +15,7 @@ from modules.utils.shell import Shell
 from modules.drivers.router import RouterDriver
 from modules.drivers.opkg import OpkgDriver
 from modules.drivers.hydraroute import HydraRouteDriver
+from modules.drivers.magitrickle import MagiTrickleDriver
 from modules.drivers.nfqws import NfqwsDriver
 from modules.drivers.awg import AwgDriver
 from modules.drivers.speedtest import SpeedTestDriver
@@ -23,6 +24,7 @@ from modules.components.router import RouterComponent
 from modules.components.opkg import OpkgComponent
 from modules.components.components_manager import ComponentsManagerComponent
 from modules.components.hydra import HydraComponent
+from modules.components.magitrickle import MagiTrickleComponent
 from modules.components.nfqws import NfqwsComponent
 from modules.components.awg import AwgComponent
 from modules.components.speed import SpeedComponent
@@ -46,6 +48,7 @@ def main() -> int:
     router_drv = RouterDriver(app.sh)
     opkg_drv = OpkgDriver(app.sh)
     hydra_drv = HydraRouteDriver(app.sh)
+    magi_drv = MagiTrickleDriver(app.sh)
     nfqws_drv = NfqwsDriver(app.sh)
     awg_drv = AwgDriver(app.sh, host=cfg.awg_host, port=cfg.awg_port, timeout_sec=cfg.awg_timeout_sec, debug=cfg.debug)
     speed_drv = SpeedTestDriver(app.sh)
@@ -54,8 +57,9 @@ def main() -> int:
     app.components = {
         "r": RouterComponent(router_drv),
         "o": OpkgComponent(opkg_drv),
-        "c": ComponentsManagerComponent(opkg_drv, hydra_drv, nfqws_drv, awg_drv),
-        "hy": HydraComponent(hydra_drv),
+        "c": ComponentsManagerComponent(opkg_drv, hydra_drv, magi_drv, nfqws_drv, awg_drv),
+        "hy": HydraComponent(hydra_drv, magi_drv),
+        "mt": MagiTrickleComponent(magi_drv, hydra_drv),
         "nq": NfqwsComponent(nfqws_drv),
         "aw": AwgComponent(awg_drv),
         "sp": SpeedComponent(speed_drv, opkg_drv, awg_drv),
