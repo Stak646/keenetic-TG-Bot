@@ -379,6 +379,10 @@ class App:
         def _text(m):
             if not self.is_admin(m.from_user.id):
                 return
+            # allow components to consume the next text message
+            self.last_chat_id = m.chat.id
+            self.last_message_id = 0
+            self.last_user_id = m.from_user.id
             kind = self.pop_pending_input(m.chat.id)
             if kind == "opkg_search":
                 q = (m.text or "").strip()
@@ -389,6 +393,30 @@ class App:
                 comp = self.components.get("o")
                 if comp:
                     screen = comp.render(self, "search_do", {"q": q})
+                    self.send_screen(m.chat.id, screen)
+                return
+            if kind == "awg_rename":
+                comp = self.components.get("aw")
+                if comp:
+                    screen = comp.render(self, "tun_rename_do", {"text": (m.text or "")})
+                    self.send_screen(m.chat.id, screen)
+                return
+            if kind == "awg_import":
+                comp = self.components.get("aw")
+                if comp:
+                    screen = comp.render(self, "adv_import_do", {"text": (m.text or "")})
+                    self.send_screen(m.chat.id, screen)
+                return
+            if kind == "awg_policy_name":
+                comp = self.components.get("aw")
+                if comp:
+                    screen = comp.render(self, "pol_new_do", {"text": (m.text or "")})
+                    self.send_screen(m.chat.id, screen)
+                return
+            if kind == "awg_policy_rename":
+                comp = self.components.get("aw")
+                if comp:
+                    screen = comp.render(self, "pol_ren_do", {"text": (m.text or "")})
                     self.send_screen(m.chat.id, screen)
                 return
             # Default: show home
